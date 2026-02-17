@@ -23,7 +23,7 @@ confluence put <page_id> [--force]          # upload local edits
 confluence diff <page_id>                   # compare local vs remote
 confluence sync <space_key> [--workers 10]  # bulk-download space (parallel)
 confluence search <query>                   # search local page-index.json
-confluence index [--space POL --space COMPLY] # rebuild index from API
+confluence index [--space <key> ...]           # rebuild index from API
 confluence hints [topic]                    # show ADF/macro editing guidance
 ```
 
@@ -93,7 +93,7 @@ from atlassian_cli.adf import (
 )
 
 # Load page
-with open('pages/POL/<page_id>.json') as f:
+with open('pages/<SPACE>/<page_id>.json') as f:
     doc = json.load(f)
 content = doc['content']
 
@@ -116,7 +116,7 @@ content = replace_extension(content, "Extension Title", new_content)
 
 # Save
 doc['content'] = content
-with open('pages/POL/<page_id>.json', 'w') as f:
+with open('pages/<SPACE>/<page_id>.json', 'w') as f:
     json.dump(doc, f, indent=2)
 ```
 
