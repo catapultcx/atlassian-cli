@@ -1,6 +1,5 @@
 """Tests for atlassian_cli.adf module."""
 
-import json
 import pytest
 
 from atlassian_cli.adf import (
@@ -13,8 +12,6 @@ from atlassian_cli.adf import (
     find_sections,
     heading,
     insert_after,
-    italic,
-    link,
     md_to_adf,
     ordered_list,
     panel,
@@ -25,7 +22,6 @@ from atlassian_cli.adf import (
     table,
     text,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures — sample ADF documents

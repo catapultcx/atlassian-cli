@@ -17,7 +17,6 @@ import re
 
 from atlas_doc_parser.api import NodeDoc
 
-
 # ---------------------------------------------------------------------------
 # ADF → markdown  (delegates to atlas-doc-parser)
 # ---------------------------------------------------------------------------
