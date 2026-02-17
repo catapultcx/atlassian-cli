@@ -27,6 +27,7 @@ classifiers = [
 ]
 dependencies = [
     "requests>=2.28.0",
+    "atlas-doc-parser>=1.0.0",
 ]
 
 [project.optional-dependencies]
