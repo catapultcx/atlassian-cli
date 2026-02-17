@@ -1,0 +1,6 @@
+.env
+*.pyc
+__pycache__/
+pages/
+page-index.json
+.venv/
