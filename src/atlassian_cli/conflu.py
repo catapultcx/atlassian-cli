@@ -347,6 +347,31 @@ def cmd_index(args):
 
 
 # ---------------------------------------------------------------------------
+# hints
+# ---------------------------------------------------------------------------
+
+def cmd_hints(args):
+    """Print hints for AI agents (or humans) working with ADF."""
+    from atlassian_cli.hints import format_hints, get_hints
+
+    if args.json_output:
+        from atlassian_cli.hints import get_hint
+        if args.topic:
+            data = get_hint(args.topic)
+            if data is None:
+                emit_error(f'Unknown topic: {args.topic}. Available: {", ".join(get_hints().keys())}')
+                return
+        else:
+            data = get_hints()
+        print(json.dumps(data, indent=2))
+    else:
+        if args.topic and args.topic not in get_hints():
+            emit_error(f'Unknown topic: {args.topic}. Available: {", ".join(get_hints().keys())}')
+            return
+        print(format_hints(args.topic))
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -391,6 +416,10 @@ def main():
     p.add_argument('--space', action='append', help='Space key(s) to index (default: POL COMPLY)')
     p.add_argument('--output', default='page-index.json', help='Output file (default: page-index.json)')
     p.set_defaults(func=cmd_index)
+
+    p = sub.add_parser('hints', help='Show hints for working with ADF and Confluence macros')
+    p.add_argument('topic', nargs='?', help='Topic: macros, sections, editing, adf_basics (default: all)')
+    p.set_defaults(func=cmd_hints)
 
     args = parser.parse_args()
     if args.json_output:

@@ -8,7 +8,9 @@ from atlassian_cli.adf import (
     bullet_list,
     code_block,
     expand,
+    extract_extension,
     extract_section,
+    find_extensions,
     find_sections,
     heading,
     insert_after,
@@ -16,6 +18,7 @@ from atlassian_cli.adf import (
     ordered_list,
     panel,
     para,
+    replace_extension,
     replace_section,
     rule,
     status_badge,
@@ -181,6 +184,116 @@ class TestInsertAfter:
     def test_insert_not_found(self, sample_doc):
         with pytest.raises(ValueError, match='Section not found'):
             insert_after(sample_doc, "Nonexistent", [para("x")])
+
+
+# ---------------------------------------------------------------------------
+# Extensions (bodiedExtension)
+# ---------------------------------------------------------------------------
+
+def _make_extension(title, key='panelbox', content=None):
+    """Helper to create a bodiedExtension node for testing."""
+    if content is None:
+        content = [para(f"Content of {title}")]
+    return {
+        'type': 'bodiedExtension',
+        'attrs': {
+            'layout': 'default',
+            'extensionType': 'com.atlassian.confluence.macro.core',
+            'extensionKey': key,
+            'parameters': {
+                'macroParams': {
+                    'id': {'value': '4'},
+                    'title': {'value': title},
+                },
+                'macroMetadata': {'macroId': {'value': 'test-id'}, 'schemaVersion': {'value': '1'}},
+            },
+            'localId': 'test-local-id',
+        },
+        'content': content,
+    }
+
+
+@pytest.fixture
+def doc_with_extensions():
+    """A doc with bodiedExtension nodes mixed with regular content."""
+    return [
+        _make_extension("In Scope Controls", content=[bullet_list(["5.15", "5.16"])]),
+        _make_extension("References", key='panelbox'),
+        heading(2, "Introduction"),
+        para("Some text."),
+    ]
+
+
+class TestFindExtensions:
+    def test_finds_all(self, doc_with_extensions):
+        exts = find_extensions(doc_with_extensions)
+        assert len(exts) == 2
+        assert exts[0]['title'] == 'In Scope Controls'
+        assert exts[0]['key'] == 'panelbox'
+        assert exts[0]['index'] == 0
+        assert exts[1]['title'] == 'References'
+        assert exts[1]['index'] == 1
+
+    def test_empty_doc(self):
+        assert find_extensions([]) == []
+
+    def test_no_extensions(self):
+        assert find_extensions([para("just text"), heading(2, "H")]) == []
+
+
+class TestExtractExtension:
+    def test_extract_by_title(self, doc_with_extensions):
+        node = extract_extension(doc_with_extensions, "In Scope Controls")
+        assert node is not None
+        assert node['type'] == 'bodiedExtension'
+        assert node['content'][0]['type'] == 'bulletList'
+
+    def test_extract_case_insensitive(self, doc_with_extensions):
+        node = extract_extension(doc_with_extensions, "references")
+        assert node is not None
+
+    def test_extract_substring(self, doc_with_extensions):
+        node = extract_extension(doc_with_extensions, "Scope")
+        assert node is not None
+        assert 'In Scope Controls' in str(node)
+
+    def test_extract_not_found(self, doc_with_extensions):
+        assert extract_extension(doc_with_extensions, "Nonexistent") is None
+
+
+class TestReplaceExtension:
+    def test_replace_content(self, doc_with_extensions):
+        new_content = [bullet_list(["5.15", "5.16", "5.17"])]
+        result = replace_extension(doc_with_extensions, "In Scope Controls", new_content)
+        assert len(result) == len(doc_with_extensions)
+        # The extension wrapper is preserved
+        assert result[0]['type'] == 'bodiedExtension'
+        assert result[0]['attrs']['parameters']['macroParams']['title']['value'] == 'In Scope Controls'
+        # Content is replaced
+        assert len(result[0]['content'][0]['content']) == 3  # 3 list items now
+
+    def test_replace_preserves_others(self, doc_with_extensions):
+        new_content = [para("Updated")]
+        result = replace_extension(doc_with_extensions, "References", new_content)
+        # First extension untouched
+        assert result[0]['content'][0]['type'] == 'bulletList'
+        # Second extension content replaced
+        assert result[1]['content'] == [para("Updated")]
+        # Regular content untouched
+        assert result[2]['type'] == 'heading'
+
+    def test_replace_not_found(self, doc_with_extensions):
+        with pytest.raises(ValueError, match='Extension not found'):
+            replace_extension(doc_with_extensions, "Nonexistent", [para("x")])
+
+
+class TestAdfToMarkdownExtensions:
+    def test_renders_extension_content(self, doc_with_extensions):
+        md = adf_to_markdown(doc_with_extensions)
+        assert 'panelbox: In Scope Controls' in md
+        assert '5.15' in md
+        assert 'panelbox: References' in md
+        assert 'Introduction' in md
 
 
 # ---------------------------------------------------------------------------

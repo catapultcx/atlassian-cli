@@ -4,13 +4,16 @@ Reading uses atlas-doc-parser (ADF → markdown).
 Building and editing are handled here.
 
 Provides:
-    adf_to_markdown  Convert ADF doc/nodes to markdown (via atlas-doc-parser)
-    md_to_adf        Convert markdown string to ADF node list
-    find_sections    List headings with node index ranges
-    extract_section  Get ADF nodes for one section by heading text
-    replace_section  Splice new nodes into a section
-    insert_after     Insert nodes after a section
-    Builder funcs    heading(), para(), text(), bold(), table(), etc.
+    adf_to_markdown    Convert ADF doc/nodes to markdown (via atlas-doc-parser)
+    md_to_adf          Convert markdown string to ADF node list
+    find_sections      List headings with node index ranges
+    extract_section    Get ADF nodes for one section by heading text
+    replace_section    Splice new nodes into a section
+    insert_after       Insert nodes after a section
+    find_extensions    List bodiedExtension nodes (macros/addons) with index and title
+    extract_extension  Get a bodiedExtension node by title
+    replace_extension  Replace the content inside a bodiedExtension by title
+    Builder funcs      heading(), para(), text(), bold(), table(), etc.
 """
 
 import re
@@ -26,11 +29,41 @@ def adf_to_markdown(adf):
 
     Accepts either a full ADF doc ``{"type": "doc", "content": [...]}``
     or a plain list of ADF nodes.
+
+    Handles bodiedExtension nodes (third-party macros) by rendering their
+    content with a ``[macro: Title]`` prefix, since atlas-doc-parser drops them.
     """
     if isinstance(adf, list):
-        adf = {'type': 'doc', 'version': 1, 'content': adf}
-    doc = NodeDoc.from_dict(adf)
+        nodes = adf
+    else:
+        nodes = adf.get('content', [])
+
+    # Pre-process: expand bodiedExtension nodes so atlas-doc-parser can render the content
+    expanded = _expand_extensions(nodes)
+    doc = NodeDoc.from_dict({'type': 'doc', 'version': 1, 'content': expanded})
     return doc.to_markdown()
+
+
+def _expand_extensions(nodes):
+    """Replace bodiedExtension nodes with renderable equivalents.
+
+    Inserts a bold paragraph ``[extensionKey: Title]`` followed by the
+    extension's content nodes, so they appear in markdown output.
+    """
+    result = []
+    for node in nodes:
+        if isinstance(node, dict) and node.get('type') == 'bodiedExtension':
+            title = _extension_title(node)
+            key = node.get('attrs', {}).get('extensionKey', 'macro')
+            label = f'[{key}: {title}]' if title else f'[{key}]'
+            result.append({
+                'type': 'paragraph',
+                'content': [{'type': 'text', 'text': label, 'marks': [{'type': 'strong'}]}],
+            })
+            result.extend(node.get('content', []))
+        else:
+            result.append(node)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +145,68 @@ def insert_after(nodes, heading_text, new_nodes):
     if not section:
         raise ValueError(f'Section not found: {heading_text}')
     return nodes[:section['end']] + new_nodes + nodes[section['end']:]
+
+
+# ---------------------------------------------------------------------------
+# Extensions (bodiedExtension) — find, extract, replace
+# ---------------------------------------------------------------------------
+
+def _extension_title(node):
+    """Extract the title from a bodiedExtension node's macroParams."""
+    try:
+        return node['attrs']['parameters']['macroParams']['title']['value']
+    except (KeyError, TypeError):
+        return ''
+
+
+def find_extensions(nodes):
+    """Return list of bodiedExtension nodes: [{title, key, index}, ...].
+
+    ``nodes`` is the top-level content array of an ADF doc.
+    """
+    results = []
+    for i, node in enumerate(nodes):
+        if isinstance(node, dict) and node.get('type') == 'bodiedExtension':
+            key = node.get('attrs', {}).get('extensionKey', '')
+            results.append({
+                'title': _extension_title(node),
+                'key': key,
+                'index': i,
+            })
+    return results
+
+
+def _find_extension(nodes, title):
+    """Find a bodiedExtension by title (case-insensitive substring match)."""
+    query = title.lower()
+    for ext in find_extensions(nodes):
+        if query in ext['title'].lower():
+            return ext
+    return None
+
+
+def extract_extension(nodes, title):
+    """Return the bodiedExtension node matching title, or None."""
+    ext = _find_extension(nodes, title)
+    if not ext:
+        return None
+    return nodes[ext['index']]
+
+
+def replace_extension(nodes, title, new_content):
+    """Replace the content inside a bodiedExtension. Returns new node list.
+
+    Only replaces the ``content`` array inside the extension node —
+    the wrapper (attrs, macroParams, styling) is preserved.
+    Raises ValueError if extension not found.
+    """
+    ext = _find_extension(nodes, title)
+    if not ext:
+        raise ValueError(f'Extension not found: {title}')
+    idx = ext['index']
+    updated = dict(nodes[idx])
+    updated['content'] = new_content
+    return nodes[:idx] + [updated] + nodes[idx + 1:]
 
 
 # ---------------------------------------------------------------------------
