@@ -23,7 +23,7 @@ confluence put <page_id> [--force]          # upload local edits
 confluence diff <page_id>                   # compare local vs remote
 confluence sync <space_key> [--workers 10]  # bulk-download space (parallel)
 confluence search <query>                   # search local page-index.json
-confluence index [--space <key> ...]           # rebuild index from API
+confluence index [--space <key> --space <key2>] # rebuild index from API (multiple spaces)
 confluence hints [topic]                    # show ADF/macro editing guidance
 ```
 
