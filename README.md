@@ -1,15 +1,15 @@
 <p align="center">
-  <h1 align="center">claude-atlassian-cli</h1>
+  <h1 align="center">atlassian-cli</h1>
   <p align="center">
     Fast CLI tools for Atlassian Cloud — built for AI agents, loved by humans.
   </p>
 </p>
 
 <p align="center">
-  <a href="https://github.com/catapultcx/claude-atlassian-cli/actions/workflows/ci.yml"><img src="https://github.com/catapultcx/claude-atlassian-cli/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://pypi.org/project/claude-atlassian-cli/"><img src="https://img.shields.io/pypi/v/claude-atlassian-cli" alt="PyPI"></a>
-  <a href="https://pypi.org/project/claude-atlassian-cli/"><img src="https://img.shields.io/pypi/pyversions/claude-atlassian-cli" alt="Python"></a>
-  <a href="https://github.com/catapultcx/claude-atlassian-cli/blob/main/LICENSE"><img src="https://img.shields.io/github/license/catapultcx/claude-atlassian-cli" alt="License"></a>
+  <a href="https://github.com/catapultcx/atlassian-cli/actions/workflows/ci.yml"><img src="https://github.com/catapultcx/atlassian-cli/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://pypi.org/project/atlassian-cli/"><img src="https://img.shields.io/pypi/v/atlassian-cli" alt="PyPI"></a>
+  <a href="https://pypi.org/project/atlassian-cli/"><img src="https://img.shields.io/pypi/pyversions/atlassian-cli" alt="Python"></a>
+  <a href="https://github.com/catapultcx/atlassian-cli/blob/main/LICENSE"><img src="https://img.shields.io/github/license/catapultcx/atlassian-cli" alt="License"></a>
 </p>
 
 ---
@@ -19,13 +19,13 @@ Two CLI tools — `confluence` and `jira` — that talk directly to Atlassian Cl
 ## Install
 
 ```bash
-pip install claude-atlassian-cli
+pip install atlassian-cli
 ```
 
 Or from source:
 
 ```bash
-pip install git+https://github.com/catapultcx/claude-atlassian-cli.git
+pip install git+https://github.com/catapultcx/atlassian-cli.git
 ```
 
 ## Setup
@@ -192,8 +192,8 @@ src/atlassian_cli/
 ## Development
 
 ```bash
-git clone https://github.com/catapultcx/claude-atlassian-cli.git
-cd claude-atlassian-cli
+git clone https://github.com/catapultcx/atlassian-cli.git
+cd atlassian-cli
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 pytest
