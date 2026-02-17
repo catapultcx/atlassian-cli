@@ -17,34 +17,11 @@ import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from atlassian_config import get_config, get_session
+from atlassian_cli.config import setup
+from atlassian_cli.http import APIError, api_get, api_put
+from atlassian_cli.output import emit, emit_error, set_json_mode
 
 V2 = '/wiki/api/v2'
-
-
-# ---------------------------------------------------------------------------
-# API helpers
-# ---------------------------------------------------------------------------
-
-class APIError(Exception):
-    def __init__(self, status, body):
-        self.status = status
-        self.body = body
-        super().__init__(f'HTTP {status}: {body[:200]}')
-
-
-def api_get(session, base, path, **params):
-    resp = session.get(f'{base}{path}', params=params or None)
-    if not resp.ok:
-        raise APIError(resp.status_code, resp.text)
-    return resp.json()
-
-
-def api_put(session, base, path, data):
-    resp = session.put(f'{base}{path}', json=data)
-    if not resp.ok:
-        raise APIError(resp.status_code, resp.text)
-    return resp.json()
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +35,6 @@ def get_page(session, base, page_id):
     """Fetch a single page with ADF body."""
     data = api_get(session, base, f'{V2}/pages/{page_id}',
                    **{'body-format': 'atlas_doc_format'})
-    # value comes back as a JSON-encoded string — parse it
     body = data.get('body', {}).get('atlas_doc_format', {})
     if isinstance(body.get('value'), str):
         try:
@@ -102,7 +78,6 @@ def list_pages(session, base, space_id):
         pages.extend(data.get('results', []))
         next_link = data.get('_links', {}).get('next')
         if next_link:
-            # next_link is a relative path like /wiki/api/v2/spaces/…?cursor=…
             url = f'{base}{next_link}' if next_link.startswith('/') else next_link
         else:
             url = None
@@ -114,30 +89,25 @@ def list_pages(session, base, space_id):
 # ---------------------------------------------------------------------------
 
 def _ver(page):
-    """Extract version number from a page object."""
     v = page.get('version', {})
     return v.get('number', 0) if isinstance(v, dict) else int(v or 0)
 
 
 def _ver_ts(page):
-    """Extract version timestamp from a page object."""
     v = page.get('version', {})
     return v.get('createdAt', '') if isinstance(v, dict) else ''
 
 
 def save_page(page_data, space_key, pages_dir):
-    """Write ADF body and metadata sidecar to disk."""
     page_id = page_data['id']
     space_dir = os.path.join(pages_dir, space_key)
     os.makedirs(space_dir, exist_ok=True)
 
-    # ADF body
     body = page_data.get('body', {}).get('atlas_doc_format', {}).get('value', {})
     adf_path = os.path.join(space_dir, f'{page_id}.json')
     with open(adf_path, 'w') as f:
         json.dump(body, f, indent=2)
 
-    # Metadata sidecar
     meta = {
         'id': page_id,
         'title': page_data.get('title', ''),
@@ -155,7 +125,6 @@ def save_page(page_data, space_key, pages_dir):
 
 
 def _find_page_file(page_id, pages_dir, suffix):
-    """Locate a page file across space subdirs."""
     if not os.path.isdir(pages_dir):
         return None
     for entry in os.listdir(pages_dir):
@@ -185,19 +154,13 @@ def load_adf(page_id, pages_dir):
 # Commands
 # ---------------------------------------------------------------------------
 
-def setup():
-    """Return (session, base_url) from config."""
-    url, email, token = get_config()
-    return get_session(email, token), url
-
-
 def cmd_get(args):
     session, base = setup()
     page = get_page(session, base, args.page_id)
     space = get_space(session, base, space_id=page['spaceId'])
     space_key = space.get('key', str(page['spaceId']))
     adf_path, _ = save_page(page, space_key, args.dir)
-    print(f'OK {page["title"]} (v{_ver(page)}) -> {adf_path}')
+    emit('OK', f'{page["title"]} (v{_ver(page)}) -> {adf_path}')
 
 
 def cmd_put(args):
@@ -205,24 +168,19 @@ def cmd_put(args):
 
     meta = load_meta(args.page_id, args.dir)
     if not meta:
-        print(f'ERR No local metadata for page {args.page_id}', file=sys.stderr)
+        emit_error(f'No local metadata for page {args.page_id}')
         sys.exit(1)
     adf = load_adf(args.page_id, args.dir)
     if not adf:
-        print(f'ERR No local ADF for page {args.page_id}', file=sys.stderr)
+        emit_error(f'No local ADF for page {args.page_id}')
         sys.exit(1)
 
-    # Fetch remote to get current version
     remote = get_page(session, base, args.page_id)
     remote_ver = _ver(remote)
     local_ver = meta.get('version', 0)
 
     if not args.force and remote_ver != local_ver:
-        print(
-            f'ERR Version conflict: local v{local_ver}, remote v{remote_ver}. '
-            f'Use --force to overwrite.',
-            file=sys.stderr,
-        )
+        emit_error(f'Version conflict: local v{local_ver}, remote v{remote_ver}. Use --force to overwrite.')
         sys.exit(1)
 
     new_version = remote_ver + 1
@@ -236,11 +194,10 @@ def cmd_put(args):
         },
         'version': {
             'number': new_version,
-            'message': 'Updated via conflu.py',
+            'message': 'Updated via confluence CLI',
         },
     })
 
-    # Update local metadata with new version
     meta['version'] = new_version
     meta['updatedAt'] = _ver_ts(result)
     space_key = meta.get('spaceKey', '')
@@ -248,7 +205,7 @@ def cmd_put(args):
     with open(meta_path, 'w') as f:
         json.dump(meta, f, indent=2)
 
-    print(f'OK {meta["title"]} updated to v{new_version}')
+    emit('OK', f'{meta["title"]} updated to v{new_version}')
 
 
 def cmd_diff(args):
@@ -256,7 +213,7 @@ def cmd_diff(args):
 
     local_adf = load_adf(args.page_id, args.dir)
     if not local_adf:
-        print(f'ERR No local ADF for page {args.page_id}', file=sys.stderr)
+        emit_error(f'No local ADF for page {args.page_id}')
         sys.exit(1)
 
     remote = get_page(session, base, args.page_id)
@@ -274,7 +231,7 @@ def cmd_diff(args):
         sys.stdout.writelines(diff)
     else:
         meta = load_meta(args.page_id, args.dir) or {}
-        print(f'OK No differences — {meta.get("title", args.page_id)}')
+        emit('OK', f'No differences — {meta.get("title", args.page_id)}')
 
 
 def cmd_sync(args):
@@ -287,7 +244,6 @@ def cmd_sync(args):
     pages = list_pages(session, base, space_id)
     print(f'Found {len(pages)} pages', file=sys.stderr)
 
-    # Determine which pages need fetching
     to_fetch = []
     skipped = 0
     for page in pages:
@@ -304,7 +260,7 @@ def cmd_sync(args):
         print(f'SKIP {skipped} pages already up-to-date', file=sys.stderr)
 
     if not to_fetch:
-        print(f'DONE {space_key}: {len(pages)} pages, all up-to-date')
+        emit('DONE', f'{space_key}: {len(pages)} pages, all up-to-date')
         return
 
     print(f'Fetching {len(to_fetch)} pages ({args.workers} workers)…', file=sys.stderr)
@@ -327,12 +283,12 @@ def cmd_sync(args):
         for future in as_completed(futures):
             print(future.result())
 
-    print(f'DONE {space_key}: {len(to_fetch)} fetched, {skipped} skipped, {errors} errors')
+    emit('DONE', f'{space_key}: {len(to_fetch)} fetched, {skipped} skipped, {errors} errors')
 
 
 def cmd_search(args):
     if not os.path.isfile(args.index):
-        print(f'ERR Index not found: {args.index}', file=sys.stderr)
+        emit_error(f'Index not found: {args.index}')
         sys.exit(1)
 
     with open(args.index) as f:
@@ -340,7 +296,6 @@ def cmd_search(args):
 
     query = args.query.lower()
 
-    # index format: {"POL": [...], "COMPLY": [...]} or flat list
     if isinstance(index, dict):
         flat = []
         for space_key, pages in index.items():
@@ -388,7 +343,7 @@ def cmd_index(args):
         json.dump(index, f, indent=2)
 
     total = sum(len(v) for v in index.values())
-    print(f'DONE {total} pages indexed -> {args.output}')
+    emit('DONE', f'{total} pages indexed -> {args.output}')
 
 
 # ---------------------------------------------------------------------------
@@ -397,31 +352,29 @@ def cmd_index(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        prog='conflu',
+        prog='confluence',
         description='Confluence Cloud CLI — fast ADF page management',
     )
+    parser.add_argument('--json', action='store_true', dest='json_output',
+                        help='Output as JSON for programmatic parsing')
     sub = parser.add_subparsers(dest='command', required=True)
 
-    # get
     p = sub.add_parser('get', help='Download a page (ADF + metadata)')
     p.add_argument('page_id', help='Confluence page ID')
     p.add_argument('--dir', default='pages', help='Output directory (default: pages)')
     p.set_defaults(func=cmd_get)
 
-    # put
     p = sub.add_parser('put', help='Upload local ADF to Confluence')
     p.add_argument('page_id', help='Confluence page ID')
     p.add_argument('--dir', default='pages', help='Pages directory (default: pages)')
     p.add_argument('--force', action='store_true', help='Skip version conflict check')
     p.set_defaults(func=cmd_put)
 
-    # diff
     p = sub.add_parser('diff', help='Compare local vs remote ADF')
     p.add_argument('page_id', help='Confluence page ID')
     p.add_argument('--dir', default='pages', help='Pages directory (default: pages)')
     p.set_defaults(func=cmd_diff)
 
-    # sync
     p = sub.add_parser('sync', help='Bulk-download all pages in a space')
     p.add_argument('space_key', help='Space key (e.g. POL, COMPLY)')
     p.add_argument('--dir', default='pages', help='Output directory (default: pages)')
@@ -429,23 +382,23 @@ def main():
     p.add_argument('--force', action='store_true', help='Re-download all, ignore cache')
     p.set_defaults(func=cmd_sync)
 
-    # search
     p = sub.add_parser('search', help='Search local page index')
     p.add_argument('query', help='Search term (title or ID)')
     p.add_argument('--index', default='page-index.json', help='Index file path')
     p.set_defaults(func=cmd_search)
 
-    # index
     p = sub.add_parser('index', help='Rebuild page-index.json from API')
     p.add_argument('--space', action='append', help='Space key(s) to index (default: POL COMPLY)')
     p.add_argument('--output', default='page-index.json', help='Output file (default: page-index.json)')
     p.set_defaults(func=cmd_index)
 
     args = parser.parse_args()
+    if args.json_output:
+        set_json_mode(True)
     try:
         args.func(args)
     except APIError as e:
-        print(f'ERR {e}', file=sys.stderr)
+        emit_error(str(e))
         sys.exit(1)
     except KeyboardInterrupt:
         sys.exit(130)

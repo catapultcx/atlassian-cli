@@ -4,3 +4,9 @@ __pycache__/
 pages/
 page-index.json
 .venv/
+*.egg-info/
+dist/
+build/
+.atlassian-cache.json
+.pytest_cache/
+.ruff_cache/
