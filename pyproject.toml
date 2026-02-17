@@ -37,9 +37,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/catapultcx/claude-atlassian-cli"
-Repository = "https://github.com/catapultcx/claude-atlassian-cli"
-Issues = "https://github.com/catapultcx/claude-atlassian-cli/issues"
+Homepage = "https://github.com/catapultcx/atlassian-cli"
+Repository = "https://github.com/catapultcx/atlassian-cli"
+Issues = "https://github.com/catapultcx/atlassian-cli/issues"
 
 [project.scripts]
 confluence = "atlassian_cli.conflu:main"
