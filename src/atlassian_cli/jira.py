@@ -60,8 +60,12 @@ def main():
     p = issue_sub.add_parser('search', help='Search issues with JQL')
     p.add_argument('jql', help='JQL query string')
     p.add_argument('--max', type=int, default=50, help='Max results (default: 50)')
+    p.add_argument('--all', action='store_true',
+                   help='Fetch all matching issues (paginate automatically)')
     p.add_argument('--fields', default='summary,status,assignee,issuetype',
                    help='Comma-separated fields to return')
+    p.add_argument('--dump', metavar='FILE',
+                   help='Save full issue data to JSON file')
     p.set_defaults(func=jira_issues.cmd_search)
 
     p = issue_sub.add_parser('transition', help='Transition issue to new status')

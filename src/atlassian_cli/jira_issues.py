@@ -90,20 +90,49 @@ def cmd_delete(args):
     emit('OK', f'Deleted {args.key}')
 
 
+def _search_page(session, base, jql, max_results, fields, next_page_token=None):
+    """Execute a single search/jql request, return (issues, nextPageToken)."""
+    body = {'jql': jql, 'maxResults': max_results, 'fields': fields}
+    if next_page_token:
+        body['nextPageToken'] = next_page_token
+    data = api_post(session, base, f'{V3}/search/jql', body)
+    return data.get('issues', []), data.get('nextPageToken')
+
+
 def cmd_search(args):
     session, base = setup()
-    data = api_post(session, base, f'{V3}/search/jql', {
-        'jql': args.jql,
-        'maxResults': args.max,
-        'fields': args.fields.split(','),
-    })
-    issues = data.get('issues', [])
-    for issue in issues:
+    fields = args.fields.split(',')
+    all_issues = []
+    token = None
+
+    while True:
+        batch_size = min(args.max - len(all_issues), 100) if not args.all else 100
+        if batch_size <= 0:
+            break
+        issues, token = _search_page(session, base, args.jql, batch_size,
+                                     fields, token)
+        all_issues.extend(issues)
+        if not token or not issues:
+            break
+        if not args.all and len(all_issues) >= args.max:
+            break
+
+    for issue in all_issues:
         f = issue.get('fields', {})
         status = f.get('status', {}).get('name', '?')
         summary = f.get('summary', '')
-        print(f'{issue["key"]} [{status}] {summary}')
-    emit('DONE', f'{len(issues)} issues found')
+        assignee = f.get('assignee', {})
+        assignee_name = assignee.get('displayName', '') if assignee else ''
+        extra = f'  ({assignee_name})' if assignee_name else ''
+        print(f'{issue["key"]} [{status}] {summary}{extra}')
+
+    if args.dump:
+        with open(args.dump, 'w') as fh:
+            json.dump({'total': len(all_issues), 'issues': all_issues}, fh, indent=2)
+        print(f'Saved {len(all_issues)} issues to {args.dump}')
+
+    emit('DONE', f'{len(all_issues)} issues found',
+         data={'total': len(all_issues), 'issues': all_issues})
 
 
 def cmd_transition(args):

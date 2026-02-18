@@ -35,7 +35,7 @@ jira issue get <key>
 jira issue create <project> <type> <summary> [--description] [--labels] [--assignee] [--parent]
 jira issue update <key> [--summary] [--description] [--labels] [--assignee] [--fields JSON]
 jira issue delete <key>
-jira issue search <jql> [--max 50]
+jira issue search <jql> [--max 50] [--all] [--dump FILE]
 jira issue transition <key> <status>
 jira issue comment <key> <body>
 jira issue comments <key>
