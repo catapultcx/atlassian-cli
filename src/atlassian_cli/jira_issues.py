@@ -4,7 +4,7 @@ import json
 import sys
 
 from atlassian_cli.config import setup
-from atlassian_cli.http import APIError, api_delete, api_get, api_post
+from atlassian_cli.http import APIError, api_delete, api_get, api_post, api_put
 from atlassian_cli.output import emit, emit_error
 
 V3 = '/rest/api/3'
@@ -62,6 +62,7 @@ def cmd_create(args):
 def cmd_update(args):
     session, base = setup()
     fields = {}
+    update = {}
     if args.summary:
         fields['summary'] = args.summary
     if args.description:
@@ -73,14 +74,27 @@ def cmd_update(args):
     if args.fields:
         fields.update(json.loads(args.fields))
 
-    if not fields:
+    # Incremental label operations via the update verb
+    label_ops = []
+    for lbl in (args.add_labels or []):
+        label_ops.append({'add': lbl})
+    for lbl in (args.remove_labels or []):
+        label_ops.append({'remove': lbl})
+    if label_ops:
+        update['labels'] = label_ops
+
+    if not fields and not update:
         emit_error('No fields to update')
         sys.exit(1)
 
+    body = {}
+    if fields:
+        body['fields'] = fields
+    if update:
+        body['update'] = update
+
     # Jira PUT /issue returns 204 No Content on success
-    resp = session.put(f'{base}{V3}/issue/{args.key}', json={'fields': fields})
-    if not resp.ok:
-        raise APIError(resp.status_code, resp.text)
+    api_put(session, base, f'{V3}/issue/{args.key}', body)
     emit('OK', f'Updated {args.key}')
 
 

@@ -5,7 +5,7 @@ import os
 import sys
 
 from atlassian_cli.config import setup
-from atlassian_cli.http import APIError, api_delete, api_get, api_post, api_put
+from atlassian_cli.http import APIError, _retry, api_delete, api_get, api_post, api_put
 from atlassian_cli.output import emit, emit_error, emit_json
 
 CACHE_FILE = '.atlassian-cache.json'
@@ -21,13 +21,13 @@ def _discover(session, base):
             return cache['cloud_id'], cache['workspace_id']
 
     # Step 1: cloudId
-    resp = session.get(f'{base}/_edge/tenant_info')
+    resp = _retry(session.get, f'{base}/_edge/tenant_info')
     if not resp.ok:
         raise APIError(resp.status_code, f'Failed to get cloudId: {resp.text}')
     cloud_id = resp.json()['cloudId']
 
     # Step 2: workspaceId
-    resp = session.get(f'{base}/rest/servicedeskapi/assets/workspace')
+    resp = _retry(session.get, f'{base}/rest/servicedeskapi/assets/workspace')
     if not resp.ok:
         raise APIError(resp.status_code, f'Failed to get workspaceId: {resp.text}')
     workspace_id = resp.json()['values'][0]['workspaceId']

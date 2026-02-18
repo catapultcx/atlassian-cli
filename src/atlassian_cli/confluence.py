@@ -19,7 +19,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from atlassian_cli.config import setup
-from atlassian_cli.http import APIError, api_delete, api_get, api_post, api_put
+from atlassian_cli.http import APIError, _retry, api_delete, api_get, api_post, api_put
 from atlassian_cli.output import emit, emit_error, set_json_mode
 
 V2 = '/wiki/api/v2'
@@ -73,7 +73,7 @@ def list_pages(session, base, space_id):
     pages = []
     url = f'{base}{V2}/spaces/{space_id}/pages?limit=250&sort=id'
     while url:
-        resp = session.get(url)
+        resp = _retry(session.get, url)
         resp.raise_for_status()
         data = resp.json()
         pages.extend(data.get('results', []))

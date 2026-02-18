@@ -112,6 +112,7 @@ class TestCmdUpdate:
         cmd_update(Namespace(
             key="PROJ-1", summary="Updated", description=None,
             labels=None, assignee=None, fields=None,
+            add_labels=None, remove_labels=None,
         ))
         out = capsys.readouterr().out
         assert "Updated PROJ-1" in out
@@ -121,6 +122,7 @@ class TestCmdUpdate:
             cmd_update(Namespace(
                 key="PROJ-1", summary=None, description=None,
                 labels=None, assignee=None, fields=None,
+                add_labels=None, remove_labels=None,
             ))
 
     @responses.activate
@@ -129,6 +131,7 @@ class TestCmdUpdate:
         cmd_update(Namespace(
             key="PROJ-1", summary=None, description=None,
             labels=None, assignee=None, fields='{"priority": {"name": "High"}}',
+            add_labels=None, remove_labels=None,
         ))
         body = json.loads(responses.calls[0].request.body)
         assert body["fields"]["priority"]["name"] == "High"
@@ -152,7 +155,7 @@ class TestCmdSearch:
                 {"key": "PROJ-2", "fields": {"summary": "Issue 2", "status": {"name": "Done"}}},
             ]},
         )
-        cmd_search(Namespace(jql="project=PROJ", max=50, fields="summary,status"))
+        cmd_search(Namespace(jql="project=PROJ", max=50, fields="summary,status", all=False, dump=None))
         out = capsys.readouterr().out
         assert "PROJ-1" in out
         assert "PROJ-2" in out
