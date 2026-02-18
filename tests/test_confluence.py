@@ -1,4 +1,4 @@
-"""Tests for atlassian_cli.conflu (Confluence CLI)."""
+"""Tests for atlassian_cli.confluence (Confluence CLI)."""
 
 import json
 import os
@@ -7,7 +7,7 @@ from argparse import Namespace
 import pytest
 import responses
 
-from atlassian_cli.conflu import (
+from atlassian_cli.confluence import (
     _ver,
     _ver_ts,
     cmd_diff,
@@ -47,14 +47,14 @@ SAMPLE_SPACE = {"id": "100", "key": "TEST", "name": "Test Space"}
 @pytest.fixture(autouse=True)
 def _reset():
     set_json_mode(False)
-    from atlassian_cli.conflu import _space_cache
+    from atlassian_cli.confluence import _space_cache
     _space_cache.clear()
 
 
 @pytest.fixture(autouse=True)
 def _patch_setup(monkeypatch, mock_session, base_url):
     monkeypatch.setattr(
-        "atlassian_cli.conflu.setup",
+        "atlassian_cli.confluence.setup",
         lambda: (mock_session, base_url),
     )
 

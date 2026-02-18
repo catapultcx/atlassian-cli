@@ -173,7 +173,7 @@ src/atlassian_cli/
   config.py       .env parsing, auth, session factory — setup() returns (session, base_url)
   http.py         api_get/post/put/delete + APIError exception
   output.py       emit() with text/JSON modes, emit_error() to stderr
-  conflu.py       Confluence CLI — API v2, ADF format, parallel sync
+  confluence.py   Confluence CLI — API v2, ADF format, parallel sync
   adf.py          ADF utilities — section/extension ops, node builders, md conversion
   hints.py        Embedded hints for AI agents on ADF and macros
   jira.py         Jira CLI entry point — nested subparsers routing to:
@@ -195,7 +195,7 @@ Tests use `pytest` + `responses` for HTTP mocking. No live API calls.
 
 ```bash
 pytest                        # all tests
-pytest tests/test_conflu.py   # single module
+pytest tests/test_confluence.py   # single module
 pytest -k "test_search"       # by name
 ```
 

@@ -178,7 +178,7 @@ src/atlassian_cli/
   config.py       Shared auth, .env parsing, session factory
   http.py         API helpers: get/post/put/delete + error handling
   output.py       Text & JSON output formatting
-  conflu.py       Confluence CLI (v2 API, ADF)
+  confluence.py   Confluence CLI (v2 API, ADF)
   jira.py         Jira CLI entry point (subparsers)
   jira_issues.py  Jira issue commands (v3 API)
   jira_assets.py  Jira Assets commands (Assets v1 API)
