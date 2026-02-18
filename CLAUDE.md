@@ -19,7 +19,8 @@ Two entry points: `confluence` and `jira`. All commands accept `--json` for mach
 
 ```bash
 confluence get <page_id>                    # download page (ADF + meta)
-confluence put <page_id> [--force]          # upload local edits
+confluence put <page_id> [--force] [-m msg]  # upload local edits
+confluence delete <page_id>                 # delete a page
 confluence diff <page_id>                   # compare local vs remote
 confluence sync <space_key> [--workers 10]  # bulk-download space (parallel)
 confluence search <query>                   # search local page-index.json

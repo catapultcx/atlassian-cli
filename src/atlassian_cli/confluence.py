@@ -6,6 +6,7 @@ Commands:
     put     Upload local ADF to Confluence
     diff    Compare local vs remote ADF
     sync    Bulk-download all pages in a space
+    delete  Delete a page
     search  Search local page index
     index   Rebuild page-index.json from API
 """
@@ -18,7 +19,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from atlassian_cli.config import setup
-from atlassian_cli.http import APIError, api_get, api_put
+from atlassian_cli.http import APIError, api_delete, api_get, api_put
 from atlassian_cli.output import emit, emit_error, set_json_mode
 
 V2 = '/wiki/api/v2'
@@ -161,6 +162,14 @@ def cmd_get(args):
     space_key = space.get('key', str(page['spaceId']))
     adf_path, _ = save_page(page, space_key, args.dir)
     emit('OK', f'{page["title"]} (v{_ver(page)}) -> {adf_path}')
+
+
+def cmd_delete(args):
+    session, base = setup()
+    page = get_page(session, base, args.page_id)
+    title = page.get('title', args.page_id)
+    api_delete(session, base, f'{V2}/pages/{args.page_id}')
+    emit('OK', f'Deleted {title} ({args.page_id})')
 
 
 def cmd_put(args):
@@ -388,6 +397,10 @@ def main():
     p.add_argument('page_id', help='Confluence page ID')
     p.add_argument('--dir', default='pages', help='Output directory (default: pages)')
     p.set_defaults(func=cmd_get)
+
+    p = sub.add_parser('delete', help='Delete a page')
+    p.add_argument('page_id', help='Confluence page ID')
+    p.set_defaults(func=cmd_delete)
 
     p = sub.add_parser('put', help='Upload local ADF to Confluence')
     p.add_argument('page_id', help='Confluence page ID')
