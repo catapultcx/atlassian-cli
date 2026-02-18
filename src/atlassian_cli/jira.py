@@ -111,11 +111,11 @@ def main():
     p.set_defaults(func=jira_assets.cmd_schemas)
 
     p = assets_sub.add_parser('schema', help='Get schema details')
-    p.add_argument('id', help='Schema ID')
+    p.add_argument('id', help='Schema ID or name')
     p.set_defaults(func=jira_assets.cmd_schema)
 
     p = assets_sub.add_parser('types', help='List object types in a schema')
-    p.add_argument('schema_id', help='Schema ID')
+    p.add_argument('schema_id', help='Schema ID or name')
     p.set_defaults(func=jira_assets.cmd_types)
 
     p = assets_sub.add_parser('type', help='Get object type details')
@@ -123,7 +123,7 @@ def main():
     p.set_defaults(func=jira_assets.cmd_type)
 
     p = assets_sub.add_parser('type-create', help='Create object type')
-    p.add_argument('schema_id', help='Schema ID')
+    p.add_argument('schema_id', help='Schema ID or name')
     p.add_argument('name', help='Type name')
     p.add_argument('--description', help='Type description')
     p.add_argument('--parent-type-id', help='Parent object type ID')

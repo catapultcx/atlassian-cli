@@ -52,6 +52,18 @@ def assets_setup():
     return session, base, ab
 
 
+def resolve_schema(session, ab, name_or_id):
+    """Resolve a schema name to its ID, or pass through if already numeric."""
+    if name_or_id.isdigit():
+        return name_or_id
+    data = api_get(session, ab, '/objectschema/list')
+    schemas = data.get('values', data.get('objectschemas', []))
+    for s in schemas:
+        if s['name'].lower() == name_or_id.lower():
+            return str(s['id'])
+    raise APIError(404, f'Schema not found: {name_or_id}')
+
+
 def _parse_attrs(attr_list):
     """Parse key=value pairs into Assets API attribute format."""
     attrs = []
@@ -124,13 +136,15 @@ def cmd_schemas(args):
 
 def cmd_schema(args):
     session, _, ab = assets_setup()
-    data = api_get(session, ab, f'/objectschema/{args.id}')
+    schema_id = resolve_schema(session, ab, args.id)
+    data = api_get(session, ab, f'/objectschema/{schema_id}')
     emit_json(data)
 
 
 def cmd_types(args):
     session, _, ab = assets_setup()
-    data = api_get(session, ab, f'/objectschema/{args.schema_id}/objecttypes/flat')
+    schema_id = resolve_schema(session, ab, args.schema_id)
+    data = api_get(session, ab, f'/objectschema/{schema_id}/objecttypes/flat')
     types = data if isinstance(data, list) else data.get('values', [])
     for t in types:
         print(f'{t["id"]} {t["name"]}')
@@ -145,7 +159,8 @@ def cmd_type(args):
 
 def cmd_type_create(args):
     session, _, ab = assets_setup()
-    body = {'name': args.name, 'objectSchemaId': args.schema_id}
+    schema_id = resolve_schema(session, ab, args.schema_id)
+    body = {'name': args.name, 'objectSchemaId': schema_id}
     if hasattr(args, 'description') and args.description:
         body['description'] = args.description
     if hasattr(args, 'parent_type_id') and args.parent_type_id:

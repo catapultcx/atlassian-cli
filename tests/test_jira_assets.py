@@ -6,6 +6,7 @@ from argparse import Namespace
 import pytest
 import responses
 
+from atlassian_cli.http import APIError
 from atlassian_cli.jira_assets import (
     _parse_attrs,
     cmd_attrs,
@@ -19,6 +20,7 @@ from atlassian_cli.jira_assets import (
     cmd_type_create,
     cmd_types,
     cmd_update,
+    resolve_schema,
 )
 from atlassian_cli.output import set_json_mode
 
@@ -48,6 +50,45 @@ class TestParseAttrs:
     def test_exits_on_invalid(self):
         with pytest.raises(SystemExit):
             _parse_attrs(["no-equals-sign"])
+
+
+SCHEMAS_RESPONSE = {"values": [
+    {"id": "1", "name": "IT Assets"},
+    {"id": "2", "name": "HR Assets"},
+]}
+
+
+class TestResolveSchema:
+    @responses.activate
+    def test_numeric_passthrough(self, mock_session):
+        """Numeric IDs are returned directly without an API call."""
+        assert resolve_schema(mock_session, ASSETS_BASE, "1") == "1"
+        assert len(responses.calls) == 0
+
+    @responses.activate
+    def test_resolves_by_name(self, mock_session):
+        responses.add(
+            responses.GET, f"{ASSETS_BASE}/objectschema/list",
+            json=SCHEMAS_RESPONSE,
+        )
+        assert resolve_schema(mock_session, ASSETS_BASE, "IT Assets") == "1"
+
+    @responses.activate
+    def test_case_insensitive(self, mock_session):
+        responses.add(
+            responses.GET, f"{ASSETS_BASE}/objectschema/list",
+            json=SCHEMAS_RESPONSE,
+        )
+        assert resolve_schema(mock_session, ASSETS_BASE, "hr assets") == "2"
+
+    @responses.activate
+    def test_not_found_raises(self, mock_session):
+        responses.add(
+            responses.GET, f"{ASSETS_BASE}/objectschema/list",
+            json=SCHEMAS_RESPONSE,
+        )
+        with pytest.raises(APIError, match="Schema not found"):
+            resolve_schema(mock_session, ASSETS_BASE, "Nonexistent")
 
 
 class TestCmdSearch:
@@ -147,6 +188,20 @@ class TestCmdSchema:
         out = json.loads(capsys.readouterr().out)
         assert out["name"] == "IT Assets"
 
+    @responses.activate
+    def test_get_schema_by_name(self, capsys):
+        responses.add(
+            responses.GET, f"{ASSETS_BASE}/objectschema/list",
+            json=SCHEMAS_RESPONSE,
+        )
+        responses.add(
+            responses.GET, f"{ASSETS_BASE}/objectschema/1",
+            json={"id": "1", "name": "IT Assets", "objectCount": 150},
+        )
+        cmd_schema(Namespace(id="IT Assets"))
+        out = json.loads(capsys.readouterr().out)
+        assert out["name"] == "IT Assets"
+
 
 class TestCmdTypes:
     @responses.activate
@@ -162,6 +217,20 @@ class TestCmdTypes:
         out = capsys.readouterr().out
         assert "Server" in out
         assert "2 types" in out
+
+    @responses.activate
+    def test_list_types_by_schema_name(self, capsys):
+        responses.add(
+            responses.GET, f"{ASSETS_BASE}/objectschema/list",
+            json=SCHEMAS_RESPONSE,
+        )
+        responses.add(
+            responses.GET, f"{ASSETS_BASE}/objectschema/1/objecttypes/flat",
+            json=[{"id": "5", "name": "Server"}],
+        )
+        cmd_types(Namespace(schema_id="IT Assets"))
+        out = capsys.readouterr().out
+        assert "Server" in out
 
 
 class TestCmdType:
@@ -185,6 +254,20 @@ class TestCmdTypeCreate:
         )
         cmd_type_create(Namespace(schema_id="1", name="Laptop", description=None, parent_type_id=None))
         assert "Laptop" in capsys.readouterr().out
+
+    @responses.activate
+    def test_create_type_by_schema_name(self, capsys):
+        responses.add(
+            responses.GET, f"{ASSETS_BASE}/objectschema/list",
+            json=SCHEMAS_RESPONSE,
+        )
+        responses.add(
+            responses.POST, f"{ASSETS_BASE}/objecttype/create",
+            json={"id": "10", "name": "Laptop"},
+        )
+        cmd_type_create(Namespace(schema_id="IT Assets", name="Laptop", description=None, parent_type_id=None))
+        body = json.loads(responses.calls[1].request.body)
+        assert body["objectSchemaId"] == "1"
 
     @responses.activate
     def test_create_type_with_options(self, capsys):
