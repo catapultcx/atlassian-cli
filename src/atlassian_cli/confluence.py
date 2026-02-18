@@ -19,7 +19,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from atlassian_cli.config import setup
-from atlassian_cli.http import APIError, api_delete, api_get, api_put
+from atlassian_cli.http import APIError, api_delete, api_get, api_post, api_put
 from atlassian_cli.output import emit, emit_error, set_json_mode
 
 V2 = '/wiki/api/v2'
@@ -162,6 +162,50 @@ def cmd_get(args):
     space_key = space.get('key', str(page['spaceId']))
     adf_path, _ = save_page(page, space_key, args.dir)
     emit('OK', f'{page["title"]} (v{_ver(page)}) -> {adf_path}')
+
+
+def cmd_create(args):
+    session, base = setup()
+    space = get_space(session, base, key=args.space_key)
+    space_id = space['id']
+
+    body_payload = {}
+    if args.file:
+        with open(args.file) as f:
+            adf = json.load(f)
+        body_payload = {
+            'representation': 'atlas_doc_format',
+            'value': json.dumps(adf),
+        }
+    elif args.body:
+        body_payload = {
+            'representation': 'atlas_doc_format',
+            'value': json.dumps({
+                'type': 'doc', 'version': 1,
+                'content': [{'type': 'paragraph',
+                             'content': [{'type': 'text', 'text': args.body}]}],
+            }),
+        }
+
+    payload = {
+        'spaceId': space_id,
+        'status': 'current',
+        'title': args.title,
+    }
+    if body_payload:
+        payload['body'] = body_payload
+    if args.parent:
+        payload['parentId'] = str(args.parent)
+
+    result = api_post(session, base, f'{V2}/pages', payload)
+    page_id = result['id']
+
+    # Save locally
+    full_page = get_page(session, base, page_id)
+    space_key = space.get('key', args.space_key)
+    save_page(full_page, space_key, args.dir)
+
+    emit('OK', f'Created {result.get("title", args.title)} ({page_id})')
 
 
 def cmd_delete(args):
@@ -397,6 +441,15 @@ def main():
     p.add_argument('page_id', help='Confluence page ID')
     p.add_argument('--dir', default='pages', help='Output directory (default: pages)')
     p.set_defaults(func=cmd_get)
+
+    p = sub.add_parser('create', help='Create a new page')
+    p.add_argument('space_key', help='Space key (e.g. POL, COMPLY)')
+    p.add_argument('title', help='Page title')
+    p.add_argument('--body', help='Plain text body')
+    p.add_argument('--file', '-f', help='ADF JSON file for page body')
+    p.add_argument('--parent', help='Parent page ID')
+    p.add_argument('--dir', default='pages', help='Pages directory (default: pages)')
+    p.set_defaults(func=cmd_create)
 
     p = sub.add_parser('delete', help='Delete a page')
     p.add_argument('page_id', help='Confluence page ID')

@@ -18,6 +18,7 @@ Two entry points: `confluence` and `jira`. All commands accept `--json` for mach
 ### Confluence
 
 ```bash
+confluence create <space> <title> [--body|--file] [--parent ID]  # create page
 confluence get <page_id>                    # download page (ADF + meta)
 confluence put <page_id> [--force] [-m msg]  # upload local edits
 confluence delete <page_id>                 # delete a page
