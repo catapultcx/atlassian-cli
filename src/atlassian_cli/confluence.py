@@ -194,7 +194,7 @@ def cmd_put(args):
         },
         'version': {
             'number': new_version,
-            'message': 'Updated via confluence CLI',
+            'message': getattr(args, 'message', None) or 'Updated via confluence CLI',
         },
     })
 
@@ -393,6 +393,7 @@ def main():
     p.add_argument('page_id', help='Confluence page ID')
     p.add_argument('--dir', default='pages', help='Pages directory (default: pages)')
     p.add_argument('--force', action='store_true', help='Skip version conflict check')
+    p.add_argument('--message', '-m', help='Version message (shown in page history)')
     p.set_defaults(func=cmd_put)
 
     p = sub.add_parser('diff', help='Compare local vs remote ADF')
