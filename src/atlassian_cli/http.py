@@ -65,8 +65,8 @@ def api_put(session, base, path, data):
     raise APIError(response.status_code, response.text)
 
 
-def api_delete(session, base, path):
-    response = _retry(session.delete, f'{base}{path}')
+def api_delete(session, base, path, **params):
+    response = _retry(session.delete, f'{base}{path}', params=params or None)
     if response.status_code == 204:
         return None
     elif response.ok:

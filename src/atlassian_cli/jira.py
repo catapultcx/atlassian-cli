@@ -57,6 +57,8 @@ def main():
 
     p = issue_sub.add_parser('delete', help='Delete an issue')
     p.add_argument('key', help='Issue key')
+    p.add_argument('--subtasks', action='store_true', dest='delete_subtasks',
+                   help='Also delete subtasks')
     p.set_defaults(func=jira_issues.cmd_delete)
 
     p = issue_sub.add_parser('search', help='Search issues with JQL')

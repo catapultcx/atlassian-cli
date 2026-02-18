@@ -100,7 +100,10 @@ def cmd_update(args):
 
 def cmd_delete(args):
     session, base = setup()
-    api_delete(session, base, f'{V3}/issue/{args.key}')
+    params = {}
+    if args.delete_subtasks:
+        params['deleteSubtasks'] = 'true'
+    api_delete(session, base, f'{V3}/issue/{args.key}', **params)
     emit('OK', f'Deleted {args.key}')
 
 

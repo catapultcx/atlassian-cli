@@ -141,7 +141,7 @@ class TestCmdDelete:
     @responses.activate
     def test_delete(self, capsys):
         responses.add(responses.DELETE, f"{BASE}{V3}/issue/PROJ-1", status=204)
-        cmd_delete(Namespace(key="PROJ-1"))
+        cmd_delete(Namespace(key="PROJ-1", delete_subtasks=False))
         assert "Deleted PROJ-1" in capsys.readouterr().out
 
 
