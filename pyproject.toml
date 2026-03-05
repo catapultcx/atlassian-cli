@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "atlassian-cli"
-version = "0.5.8"
+version = "0.5.9"
 description = "Fast CLI tools for Atlassian Cloud (Confluence + Jira) — optimized for AI agents"
 readme = "README.md"
 license = "MIT"
