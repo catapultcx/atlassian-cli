@@ -10,3 +10,4 @@ build/
 .atlassian-cache.json
 .pytest_cache/
 .ruff_cache/
+isms-issues.json
