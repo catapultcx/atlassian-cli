@@ -2,13 +2,16 @@
 """Confluence Cloud CLI — fast ADF page management via REST API v2.
 
 Commands:
-    get     Download a page (ADF + metadata)
-    put     Upload local ADF to Confluence
-    diff    Compare local vs remote ADF
-    sync    Bulk-download all pages in a space
-    delete  Delete a page
-    search  Search local page index
-    index   Rebuild page-index.json from API
+    get      Download a page (ADF + metadata)
+    put      Upload local ADF to Confluence
+    diff     Compare local vs remote ADF
+    sync     Bulk-download all pages in a space
+    delete   Delete a page
+    search   Search local page index
+    index    Rebuild page-index.json from API
+    comments List inline and footer comments on a page
+    comment  Reply to a comment
+    resolve  Resolve an inline comment
 """
 
 import argparse
@@ -400,6 +403,256 @@ def cmd_index(args):
 
 
 # ---------------------------------------------------------------------------
+# Comments
+# ---------------------------------------------------------------------------
+
+def _adf_to_text(node):
+    """Recursively extract plain text from an ADF node."""
+    if isinstance(node, str):
+        try:
+            node = json.loads(node)
+        except (json.JSONDecodeError, TypeError):
+            return node
+    if isinstance(node, dict):
+        if node.get('type') == 'text':
+            return node.get('text', '')
+        if node.get('type') == 'hardBreak':
+            return '\n'
+        parts = []
+        for child in node.get('content', []):
+            parts.append(_adf_to_text(child))
+        return ''.join(parts)
+    if isinstance(node, list):
+        return ''.join(_adf_to_text(item) for item in node)
+    return ''
+
+
+def _make_adf_body(text):
+    """Create a simple ADF document from plain text."""
+    return {
+        'type': 'doc',
+        'version': 1,
+        'content': [
+            {'type': 'paragraph', 'content': [{'type': 'text', 'text': text}]}
+        ],
+    }
+
+
+def list_comments(session, base, page_id, comment_type='inline'):
+    """Fetch all comments on a page. comment_type: 'inline' or 'footer'."""
+    endpoint = 'inline-comments' if comment_type == 'inline' else 'footer-comments'
+    comments = []
+    url = f'{base}{V2}/pages/{page_id}/{endpoint}?body-format=atlas_doc_format'
+    while url:
+        resp = _retry(session.get, url)
+        resp.raise_for_status()
+        data = resp.json()
+        comments.extend(data.get('results', []))
+        next_link = data.get('_links', {}).get('next')
+        url = f'{base}{next_link}' if next_link and next_link.startswith('/') else next_link
+    return comments
+
+
+def list_comment_replies(session, base, comment_id, comment_type='inline'):
+    """Fetch child comments (replies) for a given comment."""
+    prefix = 'inline-comments' if comment_type == 'inline' else 'footer-comments'
+    replies = []
+    url = f'{base}{V2}/{prefix}/{comment_id}/children?body-format=atlas_doc_format'
+    while url:
+        resp = _retry(session.get, url)
+        if not resp.ok:
+            return []
+        data = resp.json()
+        replies.extend(data.get('results', []))
+        next_link = data.get('_links', {}).get('next')
+        url = f'{base}{next_link}' if next_link and next_link.startswith('/') else next_link
+    return replies
+
+
+def reply_to_comment(session, base, comment_id, body_text, comment_type='inline'):
+    """Post a reply to an existing comment via v2 API."""
+    endpoint = 'inline-comments' if comment_type == 'inline' else 'footer-comments'
+    payload = {
+        'parentCommentId': str(comment_id),
+        'body': {
+            'representation': 'atlas_doc_format',
+            'value': json.dumps(_make_adf_body(body_text)),
+        },
+    }
+    return api_post(session, base, f'{V2}/{endpoint}', payload)
+
+
+def get_inline_comment(session, base, comment_id):
+    """Fetch a single inline comment with body."""
+    return api_get(session, base, f'{V2}/inline-comments/{comment_id}',
+                   **{'body-format': 'atlas_doc_format'})
+
+
+def resolve_comment(session, base, comment_id, resolved=True):
+    """Resolve or reopen an inline comment.
+
+    Uses PUT /inline-comments/{id} with the 'resolved' boolean field.
+    Requires the current body and an incremented version number.
+    """
+    comment = get_inline_comment(session, base, comment_id)
+    current_ver = comment.get('version', {}).get('number', 0)
+    body_raw = comment.get('body', {}).get('atlas_doc_format', {}).get('value', '{}')
+
+    payload = {
+        'version': {'number': current_ver + 1},
+        'body': {
+            'representation': 'atlas_doc_format',
+            'value': body_raw if isinstance(body_raw, str) else json.dumps(body_raw),
+        },
+        'resolved': resolved,
+    }
+    return api_put(session, base, f'{V2}/inline-comments/{comment_id}', payload)
+
+
+V1 = '/wiki/rest/api'
+
+_user_cache = {}
+
+
+def _resolve_user(session, base, account_id):
+    """Look up display name for an Atlassian account ID. Cached."""
+    if not account_id:
+        return 'Unknown'
+    if account_id in _user_cache:
+        return _user_cache[account_id]
+    try:
+        data = api_get(session, base, f'{V1}/user', accountId=account_id)
+        name = data.get('displayName', account_id)
+    except APIError:
+        name = account_id
+    _user_cache[account_id] = name
+    return name
+
+
+def cmd_comments(args):
+    session, base = setup()
+    page_id = args.page_id
+
+    inline = list_comments(session, base, page_id, 'inline')
+    footer = list_comments(session, base, page_id, 'footer')
+
+    all_comments = []
+
+    for c in inline:
+        body_raw = c.get('body', {}).get('atlas_doc_format', {}).get('value', '{}')
+        text = _adf_to_text(body_raw).strip()
+        props = c.get('properties', {})
+        selection = props.get('inline-original-selection', '')
+        status = c.get('resolutionStatus', 'open')
+
+        if args.open_only and status != 'open':
+            continue
+
+        author_id = c.get('version', {}).get('authorId', '')
+        author = _resolve_user(session, base, author_id)
+
+        entry = {
+            'id': c['id'],
+            'type': 'inline',
+            'status': status,
+            'author': author,
+            'selection': selection,
+            'text': text,
+            'created': c.get('version', {}).get('createdAt', ''),
+        }
+
+        # Fetch replies
+        replies = list_comment_replies(session, base, c['id'], 'inline')
+        entry['replies'] = []
+        for r in replies:
+            r_body = r.get('body', {}).get('atlas_doc_format', {}).get('value', '{}')
+            r_author_id = r.get('version', {}).get('authorId', '')
+            entry['replies'].append({
+                'id': r['id'],
+                'author': _resolve_user(session, base, r_author_id),
+                'text': _adf_to_text(r_body).strip(),
+                'created': r.get('version', {}).get('createdAt', ''),
+            })
+
+        all_comments.append(entry)
+
+    for c in footer:
+        body_raw = c.get('body', {}).get('atlas_doc_format', {}).get('value', '{}')
+        text = _adf_to_text(body_raw).strip()
+        status = c.get('resolutionStatus', 'open')
+
+        if args.open_only and status != 'open':
+            continue
+
+        author_id = c.get('version', {}).get('authorId', '')
+        author = _resolve_user(session, base, author_id)
+
+        entry = {
+            'id': c['id'],
+            'type': 'footer',
+            'status': status,
+            'author': author,
+            'selection': '',
+            'text': text,
+            'created': c.get('version', {}).get('createdAt', ''),
+        }
+
+        replies = list_comment_replies(session, base, c['id'], 'footer')
+        entry['replies'] = []
+        for r in replies:
+            r_body = r.get('body', {}).get('atlas_doc_format', {}).get('value', '{}')
+            r_author_id = r.get('version', {}).get('authorId', '')
+            entry['replies'].append({
+                'id': r['id'],
+                'author': _resolve_user(session, base, r_author_id),
+                'text': _adf_to_text(r_body).strip(),
+                'created': r.get('version', {}).get('createdAt', ''),
+            })
+
+        all_comments.append(entry)
+
+    if args.json_output:
+        print(json.dumps(all_comments, indent=2))
+        return
+
+    if not all_comments:
+        emit('OK', 'No comments found')
+        return
+
+    for c in all_comments:
+        status_marker = '\u2713' if c['status'] == 'resolved' else '\u25cb'
+        type_label = c['type'].upper()
+        print(f'{status_marker} [{type_label}] #{c["id"]} ({c["status"]}) — {c["author"]}')
+        if c['selection']:
+            sel = c['selection'][:100]
+            print(f'  On: "{sel}{"..." if len(c["selection"]) > 100 else ""}"')
+        print(f'  {c["text"]}')
+        for r in c['replies']:
+            print(f'    \u2514\u2500 {r["author"]}: {r["text"]}')
+        print()
+
+    total = len(all_comments)
+    open_count = sum(1 for c in all_comments if c['status'] == 'open')
+    emit('DONE', f'{total} comments ({open_count} open)')
+
+
+def cmd_comment(args):
+    session, base = setup()
+    comment_type = 'footer' if args.footer else 'inline'
+    result = reply_to_comment(session, base, args.comment_id, args.body, comment_type)
+    reply_id = result.get('id', '?')
+    emit('OK', f'Replied to comment #{args.comment_id} (reply #{reply_id})')
+
+
+def cmd_resolve(args):
+    session, base = setup()
+    resolved = not args.reopen
+    resolve_comment(session, base, args.comment_id, resolved)
+    action = 'Resolved' if resolved else 'Reopened'
+    emit('OK', f'{action} comment #{args.comment_id}')
+
+
+# ---------------------------------------------------------------------------
 # hints
 # ---------------------------------------------------------------------------
 
@@ -483,6 +736,22 @@ def main():
     p.add_argument('--space', action='append', help='Space key(s) to index (default: POL COMPLY)')
     p.add_argument('--output', default='page-index.json', help='Output file (default: page-index.json)')
     p.set_defaults(func=cmd_index)
+
+    p = sub.add_parser('comments', help='List comments on a page')
+    p.add_argument('page_id', help='Confluence page ID')
+    p.add_argument('--open', action='store_true', dest='open_only', help='Show only open/unresolved comments')
+    p.set_defaults(func=cmd_comments)
+
+    p = sub.add_parser('comment', help='Reply to a comment')
+    p.add_argument('comment_id', help='Comment ID to reply to')
+    p.add_argument('body', help='Reply text')
+    p.add_argument('--footer', action='store_true', help='Reply to a footer comment (default: inline)')
+    p.set_defaults(func=cmd_comment)
+
+    p = sub.add_parser('resolve', help='Resolve or reopen an inline comment')
+    p.add_argument('comment_id', help='Comment ID to resolve')
+    p.add_argument('--reopen', action='store_true', help='Reopen instead of resolve')
+    p.set_defaults(func=cmd_resolve)
 
     p = sub.add_parser('hints', help='Show hints for working with ADF and Confluence macros')
     p.add_argument('topic', nargs='?', help='Topic: macros, sections, editing, adf_basics (default: all)')

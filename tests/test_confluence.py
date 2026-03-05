@@ -8,17 +8,26 @@ import pytest
 import responses
 
 from atlassian_cli.confluence import (
+    _adf_to_text,
+    _make_adf_body,
     _ver,
     _ver_ts,
+    cmd_comment,
+    cmd_comments,
     cmd_diff,
     cmd_get,
     cmd_index,
+    cmd_resolve,
     cmd_search,
     get_page,
     get_space,
+    list_comment_replies,
+    list_comments,
     list_pages,
     load_adf,
     load_meta,
+    reply_to_comment,
+    resolve_comment,
     save_page,
 )
 from atlassian_cli.output import set_json_mode
@@ -218,6 +227,148 @@ class TestCmdSearch:
     def test_missing_index(self):
         with pytest.raises(SystemExit):
             cmd_search(Namespace(query="test", index="/nonexistent/index.json"))
+
+
+class TestAdfToText:
+    def test_simple_text(self):
+        node = {"type": "text", "text": "Hello"}
+        assert _adf_to_text(node) == "Hello"
+
+    def test_paragraph(self):
+        node = {"type": "paragraph", "content": [{"type": "text", "text": "Hello world"}]}
+        assert _adf_to_text(node) == "Hello world"
+
+    def test_nested(self):
+        node = {"type": "doc", "content": [
+            {"type": "paragraph", "content": [{"type": "text", "text": "First"}]},
+            {"type": "paragraph", "content": [{"type": "text", "text": "Second"}]},
+        ]}
+        assert _adf_to_text(node) == "FirstSecond"
+
+    def test_json_string(self):
+        s = '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"From string"}]}]}'
+        assert _adf_to_text(s) == "From string"
+
+    def test_hard_break(self):
+        node = {"type": "paragraph", "content": [
+            {"type": "text", "text": "Line 1"},
+            {"type": "hardBreak"},
+            {"type": "text", "text": "Line 2"},
+        ]}
+        assert _adf_to_text(node) == "Line 1\nLine 2"
+
+
+class TestMakeAdfBody:
+    def test_creates_doc(self):
+        result = _make_adf_body("Hello")
+        assert result["type"] == "doc"
+        assert result["content"][0]["content"][0]["text"] == "Hello"
+
+
+class TestListComments:
+    @responses.activate
+    def test_fetches_inline_comments(self, mock_session):
+        responses.add(
+            responses.GET,
+            f"{BASE}{V2}/pages/123/inline-comments",
+            json={"results": [
+                {"id": "c1", "status": "current", "resolutionStatus": "open",
+                 "version": {"authorId": "user1", "createdAt": "2025-01-01"},
+                 "body": {"atlas_doc_format": {"value": '{"type":"doc","content":[]}'}},
+                 "properties": {}},
+            ], "_links": {}},
+        )
+        comments = list_comments(mock_session, BASE, "123", "inline")
+        assert len(comments) == 1
+        assert comments[0]["id"] == "c1"
+
+    @responses.activate
+    def test_fetches_footer_comments(self, mock_session):
+        responses.add(
+            responses.GET,
+            f"{BASE}{V2}/pages/123/footer-comments",
+            json={"results": [], "_links": {}},
+        )
+        comments = list_comments(mock_session, BASE, "123", "footer")
+        assert len(comments) == 0
+
+
+class TestListCommentReplies:
+    @responses.activate
+    def test_fetches_replies(self, mock_session):
+        responses.add(
+            responses.GET,
+            f"{BASE}{V2}/inline-comments/c1/children",
+            json={"results": [
+                {"id": "r1", "version": {"authorId": "user2", "createdAt": "2025-01-02"},
+                 "body": {"atlas_doc_format": {"value": '{"type":"doc","content":[]}'}}},
+            ], "_links": {}},
+        )
+        replies = list_comment_replies(mock_session, BASE, "c1", "inline")
+        assert len(replies) == 1
+        assert replies[0]["id"] == "r1"
+
+    @responses.activate
+    def test_returns_empty_on_404(self, mock_session):
+        responses.add(
+            responses.GET,
+            f"{BASE}{V2}/inline-comments/c1/children",
+            status=404,
+        )
+        replies = list_comment_replies(mock_session, BASE, "c1", "inline")
+        assert replies == []
+
+
+class TestReplyToComment:
+    @responses.activate
+    def test_posts_reply(self, mock_session):
+        responses.add(
+            responses.POST,
+            f"{BASE}{V2}/inline-comments",
+            json={"id": "new-reply", "status": "current"},
+        )
+        result = reply_to_comment(mock_session, BASE, "c1", "My reply", "inline")
+        assert result["id"] == "new-reply"
+        body = json.loads(responses.calls[0].request.body)
+        assert body["parentCommentId"] == "c1"
+
+
+class TestResolveComment:
+    @responses.activate
+    def test_resolves(self, mock_session):
+        responses.add(
+            responses.GET,
+            f"{BASE}{V2}/inline-comments/c1",
+            json={"id": "c1", "version": {"number": 2},
+                  "body": {"atlas_doc_format": {"value": '{"type":"doc","content":[]}'}}},
+        )
+        responses.add(
+            responses.PUT,
+            f"{BASE}{V2}/inline-comments/c1",
+            json={"id": "c1", "resolutionStatus": "resolved", "version": {"number": 3}},
+        )
+        result = resolve_comment(mock_session, BASE, "c1", resolved=True)
+        assert result["resolutionStatus"] == "resolved"
+        body = json.loads(responses.calls[1].request.body)
+        assert body["resolved"] is True
+        assert body["version"]["number"] == 3
+
+    @responses.activate
+    def test_reopens(self, mock_session):
+        responses.add(
+            responses.GET,
+            f"{BASE}{V2}/inline-comments/c1",
+            json={"id": "c1", "version": {"number": 3},
+                  "body": {"atlas_doc_format": {"value": '{"type":"doc","content":[]}'}}},
+        )
+        responses.add(
+            responses.PUT,
+            f"{BASE}{V2}/inline-comments/c1",
+            json={"id": "c1", "resolutionStatus": "reopened", "version": {"number": 4}},
+        )
+        result = resolve_comment(mock_session, BASE, "c1", resolved=False)
+        body = json.loads(responses.calls[1].request.body)
+        assert body["resolved"] is False
 
 
 class TestCmdIndex:

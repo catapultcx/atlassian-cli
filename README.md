@@ -84,6 +84,30 @@ pages/
 page-index.json              # searchable index
 ```
 
+### Comments
+
+Read, reply to, and resolve inline and footer comments on pages.
+
+```bash
+# List all comments on a page
+confluence comments 9268920323
+
+# List only open/unresolved comments
+confluence comments 9268920323 --open
+
+# Reply to an inline comment
+confluence comment 10226663432 "Fixed — updated the wording"
+
+# Reply to a footer comment
+confluence comment 10226663432 "Noted, will action" --footer
+
+# Resolve an inline comment
+confluence resolve 10226663432
+
+# Reopen a resolved comment
+confluence resolve 10226663432 --reopen
+```
+
 ## Jira CLI
 
 ### Issues
