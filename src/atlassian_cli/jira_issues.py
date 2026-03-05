@@ -4,7 +4,7 @@ import json
 import sys
 
 from atlassian_cli.config import setup
-from atlassian_cli.http import APIError, api_delete, api_get, api_post, api_put
+from atlassian_cli.http import api_delete, api_get, api_post, api_put
 from atlassian_cli.output import emit, emit_error
 
 V3 = '/rest/api/3'
