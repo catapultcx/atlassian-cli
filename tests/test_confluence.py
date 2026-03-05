@@ -12,12 +12,9 @@ from atlassian_cli.confluence import (
     _make_adf_body,
     _ver,
     _ver_ts,
-    cmd_comment,
-    cmd_comments,
     cmd_diff,
     cmd_get,
     cmd_index,
-    cmd_resolve,
     cmd_search,
     get_page,
     get_space,
@@ -366,7 +363,7 @@ class TestResolveComment:
             f"{BASE}{V2}/inline-comments/c1",
             json={"id": "c1", "resolutionStatus": "reopened", "version": {"number": 4}},
         )
-        result = resolve_comment(mock_session, BASE, "c1", resolved=False)
+        resolve_comment(mock_session, BASE, "c1", resolved=False)
         body = json.loads(responses.calls[1].request.body)
         assert body["resolved"] is False
 
