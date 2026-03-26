@@ -15,12 +15,15 @@ from atlassian_cli.output import emit_error, set_json_mode
 
 
 def main():
+    # Pull --json out early so it works at any position in the command line.
+    if '--json' in sys.argv:
+        sys.argv.remove('--json')
+        set_json_mode(True)
+
     parser = argparse.ArgumentParser(
         prog='jira',
         description='Jira CLI — issue and assets management',
     )
-    parser.add_argument('--json', action='store_true', dest='json_output',
-                        help='Output as JSON for programmatic parsing')
 
     sub = parser.add_subparsers(dest='domain', required=True)
 
@@ -135,15 +138,22 @@ def main():
     p.add_argument('name', help='Type name')
     p.add_argument('--description', help='Type description')
     p.add_argument('--parent-type-id', help='Parent object type ID')
+    p.add_argument('--icon-id', default='115', help='Icon ID (default: 115 Software Box)')
     p.set_defaults(func=jira_assets.cmd_type_create)
 
     p = assets_sub.add_parser('attrs', help='List attributes for a type')
     p.add_argument('type_id', help='Object type ID')
     p.set_defaults(func=jira_assets.cmd_attrs)
 
+    p = assets_sub.add_parser('attr-create', help='Create attribute on object type')
+    p.add_argument('type_id', help='Object type ID')
+    p.add_argument('name', help='Attribute name')
+    p.add_argument('--type', default='text', help='Attribute type (text, boolean, integer, url, select)')
+    p.add_argument('--description', help='Attribute description')
+    p.add_argument('--default-value', help='Default value')
+    p.set_defaults(func=jira_assets.cmd_attr_create)
+
     args = parser.parse_args()
-    if args.json_output:
-        set_json_mode(True)
     try:
         args.func(args)
     except APIError as e:

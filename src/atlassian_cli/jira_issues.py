@@ -3,9 +3,10 @@
 import json
 import sys
 
+from atlassian_cli.adf import adf_to_markdown
 from atlassian_cli.config import setup
 from atlassian_cli.http import api_delete, api_get, api_post, api_put
-from atlassian_cli.output import emit, emit_error
+from atlassian_cli.output import emit, emit_error, emit_json, is_json_mode
 
 V3 = '/rest/api/3'
 
@@ -34,9 +35,36 @@ def cmd_get(args):
     session, base = setup()
     data = api_get(session, base, f'{V3}/issue/{args.key}')
     fields = data.get('fields', {})
+    key = data['key']
     status = fields.get('status', {}).get('name', '?')
     summary = fields.get('summary', '')
-    emit('OK', f'{data["key"]} [{status}] {summary}', data={'key': data['key'], 'id': data['id']})
+    issue_type = fields.get('issuetype', {}).get('name', '?')
+    assignee = fields.get('assignee', {})
+    assignee_name = assignee.get('displayName', 'Unassigned') if assignee else 'Unassigned'
+    labels = fields.get('labels', [])
+    priority = fields.get('priority', {}).get('name', '') if fields.get('priority') else ''
+    created = fields.get('created', '')[:10]
+    updated = fields.get('updated', '')[:10]
+    description = fields.get('description')
+
+    json_data = {
+        'key': key, 'id': data['id'], 'status': status, 'summary': summary,
+        'type': issue_type, 'assignee': assignee_name, 'labels': labels,
+        'priority': priority, 'created': created, 'updated': updated,
+        'description': adf_to_markdown(description) if description else None,
+    }
+
+    if is_json_mode():
+        emit_json(json_data)
+    else:
+        print(f'{key} [{status}] {summary}')
+        print(f'  Type: {issue_type}  Priority: {priority}  Assignee: {assignee_name}')
+        if labels:
+            print(f'  Labels: {", ".join(labels)}')
+        print(f'  Created: {created}  Updated: {updated}')
+        if description:
+            print()
+            print(adf_to_markdown(description))
 
 
 def cmd_create(args):

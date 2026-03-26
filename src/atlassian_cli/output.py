@@ -9,6 +9,9 @@ def set_json_mode(enabled: bool):
     global _json_mode
     _json_mode = enabled
 
+def is_json_mode():
+    return _json_mode
+
 def emit(prefix, message, data=None):
     if _json_mode:
         output_data = {'status': prefix.lower(), 'message': message}

@@ -51,7 +51,9 @@ def api_get(session, base, path, **params):
 
 def api_post(session, base, path, data):
     response = _retry(session.post, f'{base}{path}', json=data)
-    if response.ok:
+    if response.status_code == 204:
+        return None
+    elif response.ok:
         return response.json()
     raise APIError(response.status_code, response.text)
 

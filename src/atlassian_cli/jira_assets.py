@@ -160,7 +160,7 @@ def cmd_type(args):
 def cmd_type_create(args):
     session, _, ab = assets_setup()
     schema_id = resolve_schema(session, ab, args.schema_id)
-    body = {'name': args.name, 'objectSchemaId': schema_id}
+    body = {'name': args.name, 'objectSchemaId': schema_id, 'iconId': args.icon_id}
     if hasattr(args, 'description') and args.description:
         body['description'] = args.description
     if hasattr(args, 'parent_type_id') and args.parent_type_id:
@@ -180,3 +180,21 @@ def cmd_attrs(args):
             type_name = type_name.get('name', '?')
         print(f'{a["id"]} {a["name"]} ({type_name}) {req}'.rstrip())
     emit('DONE', f'{len(attrs)} attributes')
+
+
+def cmd_attr_create(args):
+    session, _, ab = assets_setup()
+    # Default type mapping: 0=Text, 1=Boolean, 6=URL
+    type_map = {'text': 0, 'boolean': 1, 'integer': 2, 'float': 3, 'date': 4, 'url': 6, 'select': 7}
+    type_value = type_map.get(args.type.lower(), args.type) if not args.type.isdigit() else int(args.type)
+    body = {
+        'name': args.name,
+        'objectTypeId': args.type_id,
+        'type': type_value,
+    }
+    if args.description:
+        body['description'] = args.description
+    if args.default_value:
+        body['defaultTypeValue'] = args.default_value
+    data = api_post(session, ab, f'/objecttype/{args.type_id}/attributes', body)
+    emit('OK', f'Created attribute {data.get("id", "")} ({args.name})')

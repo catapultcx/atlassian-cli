@@ -1,14 +1,15 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with this repository or using the `atlassian-cli` package to edit Atlassian content.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Quick Start
+## Build & Test
 
 ```bash
-pip install atlassian-cli          # install from PyPI
-pip install -e ".[dev]"            # or install from source with test/lint deps
-pytest                              # run tests
-ruff check src/ tests/              # lint
+pip install -e ".[dev]"            # install from source with test/lint deps
+pytest                              # run all tests
+pytest tests/test_confluence.py    # single module
+pytest -k "test_search"            # by name pattern
+ruff check src/ tests/              # lint (line-length=120, target py310)
 ```
 
 ## Commands
@@ -26,6 +27,12 @@ confluence diff <page_id>                   # compare local vs remote
 confluence sync <space_key> [--workers 10]  # bulk-download space (parallel)
 confluence search <query>                   # search local page-index.json
 confluence index [--space <key> --space <key2>] # rebuild index from API (multiple spaces)
+confluence comments <page_id> [--open]       # list comments on a page
+confluence comment <comment_id> <body> [--footer]  # reply to a comment
+confluence resolve <comment_id> [--reopen]  # resolve/reopen inline comment
+confluence approvals [--spaces KEY ...]     # list pages pending your approval
+confluence approve <page_id>               # approve a page
+confluence reject <page_id>                # reject a page approval
 confluence hints [topic]                    # show ADF/macro editing guidance
 ```
 
@@ -54,6 +61,7 @@ jira assets create <type_id> key=val ...     # create object
 jira assets update <id> key=val ...          # update object
 jira assets delete <id>                      # delete object
 jira assets type-create <schema_id> <name>   # create object type
+jira assets attr-create <type_id> <name> [--type text] # create attribute
 ```
 
 ## Editing Confluence Pages
@@ -173,7 +181,7 @@ To create a Confluence smart link (shows page title automatically):
 ```
 src/atlassian_cli/
   config.py       .env parsing, auth, session factory — setup() returns (session, base_url)
-  http.py         api_get/post/put/delete + APIError exception
+  http.py         api_get/post/put/delete + APIError, retry with backoff on 429
   output.py       emit() with text/JSON modes, emit_error() to stderr
   confluence.py   Confluence CLI — API v2, ADF format, parallel sync
   adf.py          ADF utilities — section/extension ops, node builders, md conversion
@@ -182,6 +190,14 @@ src/atlassian_cli/
   jira_issues.py  Issue CRUD — API v3, ADF for descriptions/comments
   jira_assets.py  Assets CRUD — Assets API v1, auto-discovers workspaceId
 ```
+
+### CLI wiring pattern
+
+All CLIs use **argparse with nested subparsers**. Each subcommand sets `p.set_defaults(func=cmd_X)`, then `main()` calls `args.func(args)`. The `--json` flag is global and toggles output mode via `set_json_mode()`. Errors are `APIError` exceptions caught in `main()`.
+
+### Dependencies
+
+Runtime: `requests` (HTTP), `atlas-doc-parser` (ADF-to-markdown). Dev: `pytest`, `responses` (HTTP mocking), `ruff`.
 
 ## APIs
 
@@ -193,13 +209,7 @@ src/atlassian_cli/
 
 ## Testing
 
-Tests use `pytest` + `responses` for HTTP mocking. No live API calls.
-
-```bash
-pytest                        # all tests
-pytest tests/test_confluence.py   # single module
-pytest -k "test_search"       # by name
-```
+Tests use `pytest` + `responses` for HTTP mocking. No live API calls. Test files mirror source modules 1:1 (e.g. `test_confluence.py` tests `confluence.py`). Shared fixtures in `conftest.py`: `mock_session`, `base_url`, `mocked_responses`.
 
 ## Credentials
 

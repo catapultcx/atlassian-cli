@@ -23,8 +23,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from atlassian_cli.config import setup
 from atlassian_cli.http import APIError, _retry, api_delete, api_get, api_post, api_put
-from atlassian_cli.output import emit, emit_error, set_json_mode
+from atlassian_cli.output import emit, emit_error, emit_json, is_json_mode, set_json_mode
 
+V1 = '/wiki/rest/api'
 V2 = '/wiki/api/v2'
 
 
@@ -678,6 +679,143 @@ def cmd_hints(args):
 
 
 # ---------------------------------------------------------------------------
+# Approvals
+# ---------------------------------------------------------------------------
+
+def _get_current_user_id(session, base):
+    data = api_get(session, base, f'{V1}/user/current')
+    return data['accountId']
+
+
+def _get_approval_property(session, base, page_id):
+    try:
+        return api_get(session, base, f'{V1}/content/{page_id}/property/approvals')
+    except APIError:
+        return None
+
+
+def cmd_approvals(args):
+    """List pages pending your approval (CQL + expand, client-side filter)."""
+    session, base = setup()
+    my_id = _get_current_user_id(session, base)
+
+    cql = 'type=page AND content.property[approvals].allDone=0'
+    if args.spaces:
+        space_clause = ' OR '.join(f'space.key={s}' for s in args.spaces)
+        cql += f' AND ({space_clause})'
+
+    # Single CQL call with expanded approval properties — client-side filter by user.
+    # CQL can't query into arrays, so we filter the 'pending' list in Python.
+    pending = []
+    seen = set()
+    start = 0
+    while True:
+        resp = session.get(f'{base}{V1}/search', params={
+            'cql': cql, 'limit': 100, 'start': start, 'excerpt': 'none',
+            'expand': 'content.metadata.properties.approvals,content.space',
+        })
+        if not resp.ok:
+            raise APIError(resp.status_code, resp.text)
+        data = resp.json()
+        results = data.get('results', [])
+        if not results:
+            break
+
+        for r in results:
+            c = r.get('content', {})
+            page_id = c.get('id')
+            if not page_id or page_id in seen:
+                continue
+            seen.add(page_id)
+            value = c.get('metadata', {}).get('properties', {}).get('approvals', {}).get('value', {})
+            if my_id in value.get('pending', []):
+                pending.append({
+                    'page_id': page_id,
+                    'title': c.get('title', '?'),
+                    'space': c.get('space', {}).get('key', '?'),
+                    'status': value.get('name', {}).get('value', '?'),
+                })
+
+        total = data.get('totalSize', 0)
+        start += len(results)
+        if start >= total:
+            break
+
+    if is_json_mode():
+        emit_json(pending)
+    elif not pending:
+        emit('OK', 'No pending approvals')
+    else:
+        for p in pending:
+            print(f'{p["page_id"]} [{p["space"]}] {p["title"]}  ({p["status"]})')
+        emit('DONE', f'{len(pending)} pending approval(s)')
+
+
+def cmd_approve(args):
+    """Approve or reject a page."""
+    import time
+    session, base = setup()
+    my_id = _get_current_user_id(session, base)
+    page_id = args.page_id
+    reject = getattr(args, 'reject', False)
+
+    prop = _get_approval_property(session, base, page_id)
+    if not prop:
+        emit_error(f'No approval property on page {page_id}')
+        sys.exit(1)
+
+    value = prop['value']
+    version = prop['version']['number']
+
+    if my_id not in value.get('pending', []):
+        emit_error(f'You are not a pending approver on page {page_id}')
+        sys.exit(1)
+
+    now = int(time.time() * 1000)
+    status_code = 2 if reject else 1  # 0=pending, 1=approved, 2=rejected
+    target_list = 'rejected' if reject else 'completed'
+
+    for a in value['approvers']:
+        if a['approverid'] == my_id:
+            a['status'] = status_code
+            a['date'] = now
+
+    value['pending'] = [p for p in value['pending'] if p != my_id]
+    value[target_list].append(my_id)
+
+    total = len(value['approvers'])
+    done = len(value['completed'])
+    rejected = len(value['rejected'])
+
+    if value['pending']:
+        label = f'Pending ({done}/{total})'
+        tooltip = 'There are pending approvals.'
+        icon = '0'
+    elif rejected:
+        label = f'Rejected ({rejected}/{total})'
+        tooltip = 'Approval was rejected.'
+        icon = '2'
+    else:
+        label = f'Approved ({done}/{total})'
+        tooltip = 'All approvals are complete.'
+        icon = '1'
+
+    value['allDone'] = '0' if value['pending'] else '1'
+    value['name']['value'] = label
+    value['tooltip']['value'] = tooltip
+    value['icon']['url'] = f'/approvalmacro/images/{icon}.svg'
+
+    api_put(session, base, f'{V1}/content/{page_id}/property/approvals', {
+        'key': 'approvals',
+        'value': value,
+        'version': {'number': version + 1},
+    })
+
+    action = 'Rejected' if reject else 'Approved'
+    emit('OK', f'{action} page {page_id} ({label})')
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -756,6 +894,18 @@ def main():
     p = sub.add_parser('hints', help='Show hints for working with ADF and Confluence macros')
     p.add_argument('topic', nargs='?', help='Topic: macros, sections, editing, adf_basics (default: all)')
     p.set_defaults(func=cmd_hints)
+
+    p = sub.add_parser('approvals', help='List pages pending your approval')
+    p.add_argument('--spaces', nargs='*', help='Space keys to search (default: COMPLY POL ICOMB)')
+    p.set_defaults(func=cmd_approvals)
+
+    p = sub.add_parser('approve', help='Approve a page')
+    p.add_argument('page_id', help='Confluence page ID')
+    p.set_defaults(func=cmd_approve, reject=False)
+
+    p = sub.add_parser('reject', help='Reject a page approval')
+    p.add_argument('page_id', help='Confluence page ID')
+    p.set_defaults(func=cmd_approve, reject=True)
 
     args = parser.parse_args()
     if args.json_output:

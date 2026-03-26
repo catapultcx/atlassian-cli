@@ -252,7 +252,7 @@ class TestCmdTypeCreate:
             responses.POST, f"{ASSETS_BASE}/objecttype/create",
             json={"id": "10", "name": "Laptop"},
         )
-        cmd_type_create(Namespace(schema_id="1", name="Laptop", description=None, parent_type_id=None))
+        cmd_type_create(Namespace(schema_id="1", name="Laptop", description=None, parent_type_id=None, icon_id='115'))
         assert "Laptop" in capsys.readouterr().out
 
     @responses.activate
@@ -265,7 +265,9 @@ class TestCmdTypeCreate:
             responses.POST, f"{ASSETS_BASE}/objecttype/create",
             json={"id": "10", "name": "Laptop"},
         )
-        cmd_type_create(Namespace(schema_id="IT Assets", name="Laptop", description=None, parent_type_id=None))
+        cmd_type_create(Namespace(
+            schema_id="IT Assets", name="Laptop", description=None, parent_type_id=None, icon_id='115',
+        ))
         body = json.loads(responses.calls[1].request.body)
         assert body["objectSchemaId"] == "1"
 
@@ -278,6 +280,7 @@ class TestCmdTypeCreate:
         cmd_type_create(Namespace(
             schema_id="1", name="Desktop",
             description="Desktop computers", parent_type_id="5",
+            icon_id='115',
         ))
         body = json.loads(responses.calls[0].request.body)
         assert body["description"] == "Desktop computers"
