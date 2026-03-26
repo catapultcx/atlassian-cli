@@ -679,6 +679,61 @@ def cmd_hints(args):
 
 
 # ---------------------------------------------------------------------------
+# Page version changes
+# ---------------------------------------------------------------------------
+
+def cmd_changes(args):
+    """Show what changed in the latest version of a page."""
+    session, base = setup()
+    page_id = args.page_id
+
+    current = api_get(session, base, f'{V2}/pages/{page_id}?body-format=atlas_doc_format&include-version=true')
+    cur_ver = current['version']['number']
+    title = current['title']
+    author_id = current['version'].get('authorId', '?')
+    created = current['version'].get('createdAt', '?')[:16]
+
+    prev_ver = args.version or cur_ver - 1
+    if prev_ver < 1:
+        emit_error('Only one version exists — nothing to compare')
+        sys.exit(1)
+
+    # v1 API required for historical version bodies
+    prev_resp = session.get(
+        f'{base}{V1}/content/{page_id}',
+        params={'status': 'historical', 'version': prev_ver, 'expand': 'body.atlas_doc_format'},
+    )
+    if not prev_resp.ok:
+        raise APIError(prev_resp.status_code, prev_resp.text)
+
+    from atlassian_cli.adf import adf_to_markdown
+    cur_body = json.loads(current['body']['atlas_doc_format']['value'])
+    prev_body = json.loads(prev_resp.json()['body']['atlas_doc_format']['value'])
+
+    cur_md = adf_to_markdown(cur_body).splitlines()
+    prev_md = adf_to_markdown(prev_body).splitlines()
+
+    diff_lines = list(difflib.unified_diff(
+        prev_md, cur_md, fromfile=f'v{prev_ver}', tofile=f'v{cur_ver}', lineterm='',
+    ))
+
+    if not is_json_mode():
+        print(f'{title} — v{prev_ver} → v{cur_ver} (by {author_id[:20]} at {created})')
+        print()
+        if diff_lines:
+            print('\n'.join(diff_lines))
+        else:
+            print('No content changes between versions')
+    else:
+        emit_json({
+            'page_id': page_id, 'title': title,
+            'from_version': prev_ver, 'to_version': cur_ver,
+            'author': author_id, 'date': created,
+            'diff': '\n'.join(diff_lines) if diff_lines else None,
+        })
+
+
+# ---------------------------------------------------------------------------
 # Approvals
 # ---------------------------------------------------------------------------
 
@@ -894,6 +949,11 @@ def main():
     p = sub.add_parser('hints', help='Show hints for working with ADF and Confluence macros')
     p.add_argument('topic', nargs='?', help='Topic: macros, sections, editing, adf_basics (default: all)')
     p.set_defaults(func=cmd_hints)
+
+    p = sub.add_parser('changes', help='Show what changed in the latest version of a page')
+    p.add_argument('page_id', help='Confluence page ID')
+    p.add_argument('--version', type=int, help='Compare against this version (default: previous)')
+    p.set_defaults(func=cmd_changes)
 
     p = sub.add_parser('approvals', help='List pages pending your approval')
     p.add_argument('--spaces', nargs='*', help='Space keys to search (default: COMPLY POL ICOMB)')

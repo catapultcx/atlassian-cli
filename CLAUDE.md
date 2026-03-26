@@ -30,6 +30,7 @@ confluence index [--space <key> --space <key2>] # rebuild index from API (multip
 confluence comments <page_id> [--open]       # list comments on a page
 confluence comment <comment_id> <body> [--footer]  # reply to a comment
 confluence resolve <comment_id> [--reopen]  # resolve/reopen inline comment
+confluence changes <page_id> [--version N]  # show what changed in latest version
 confluence approvals [--spaces KEY ...]     # list pages pending your approval
 confluence approve <page_id>               # approve a page
 confluence reject <page_id>                # reject a page approval
