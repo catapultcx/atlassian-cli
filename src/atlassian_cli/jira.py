@@ -15,6 +15,9 @@ from atlassian_cli.output import emit_error, set_json_mode
 
 
 def main():
+    from atlassian_cli.update_check import check_for_update
+    check_for_update()
+
     # Pull --json out early so it works at any position in the command line.
     if '--json' in sys.argv:
         sys.argv.remove('--json')

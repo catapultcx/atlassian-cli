@@ -875,6 +875,9 @@ def cmd_approve(args):
 # ---------------------------------------------------------------------------
 
 def main():
+    from atlassian_cli.update_check import check_for_update
+    check_for_update()
+
     parser = argparse.ArgumentParser(
         prog='confluence',
         description='Confluence Cloud CLI — fast ADF page management',
