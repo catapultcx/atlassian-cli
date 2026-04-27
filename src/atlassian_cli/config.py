@@ -7,17 +7,39 @@ import requests
 from requests.auth import HTTPBasicAuth
 
 
-def load_env(path=None):
-    """Manually parse a .env file into a dict, skipping comments and blank lines."""
-    if path is None:
-        paths = [os.path.join(os.getcwd(), '.env'), os.path.join(os.path.dirname(__file__), '.env')]
-    else:
-        paths = [path]
+def _config_search_paths():
+    """Return ordered list of paths to look for a .env / config file.
 
+    Search order (first match wins):
+      1. ATLASSIAN_CLI_CONFIG env var (explicit override)
+      2. ./.env in the current working directory
+      3. $XDG_CONFIG_HOME/atlassian-cli/config (XDG default ~/.config/...)
+      4. ~/.atlassian-cli/config (legacy/dotfile location)
+      5. <package_dir>/.env (last-ditch fallback for editable installs)
+    """
+    paths = []
+    override = os.environ.get('ATLASSIAN_CLI_CONFIG')
+    if override:
+        paths.append(override)
+    paths.append(os.path.join(os.getcwd(), '.env'))
+    xdg = os.environ.get('XDG_CONFIG_HOME') or os.path.expanduser('~/.config')
+    paths.append(os.path.join(xdg, 'atlassian-cli', 'config'))
+    paths.append(os.path.expanduser('~/.atlassian-cli/config'))
+    paths.append(os.path.join(os.path.dirname(__file__), '.env'))
+    return paths
+
+
+def load_env(path=None):
+    """Parse a .env-style file into a dict, skipping comments and blank lines."""
+    paths = [path] if path else _config_search_paths()
     for env_path in paths:
-        if os.path.exists(env_path):
+        if env_path and os.path.exists(env_path):
             with open(env_path, 'r') as file:
-                return dict(line.strip().split('=', 1) for line in file if not line.startswith('#') and '=' in line)
+                return dict(
+                    line.strip().split('=', 1)
+                    for line in file
+                    if not line.startswith('#') and '=' in line
+                )
     return {}
 
 

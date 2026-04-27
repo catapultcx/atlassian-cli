@@ -214,7 +214,13 @@ Tests use `pytest` + `responses` for HTTP mocking. No live API calls. Test files
 
 ## Credentials
 
-Set in `.env` or environment variables:
+Search order (first match wins, see `config._config_search_paths`):
+1. `$ATLASSIAN_CLI_CONFIG` (explicit path)
+2. `./.env` (cwd)
+3. `$XDG_CONFIG_HOME/atlassian-cli/config` (default `~/.config/atlassian-cli/config`)
+4. `~/.atlassian-cli/config`
+5. Environment variables (`ATLASSIAN_URL`, `ATLASSIAN_EMAIL`, `ATLASSIAN_TOKEN`)
+
 ```
 ATLASSIAN_URL=https://your-site.atlassian.net
 ATLASSIAN_EMAIL=you@example.com

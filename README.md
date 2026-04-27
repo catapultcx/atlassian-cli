@@ -30,17 +30,29 @@ pip install git+https://github.com/catapultcx/atlassian-cli.git
 
 ## Setup
 
-Create a `.env` file (or export environment variables):
+Create a config file with your credentials:
 
 ```bash
+mkdir -p ~/.config/atlassian-cli
+cat > ~/.config/atlassian-cli/config <<EOF
 ATLASSIAN_URL=https://your-site.atlassian.net
 ATLASSIAN_EMAIL=you@example.com
 ATLASSIAN_TOKEN=your-api-token
+EOF
+chmod 600 ~/.config/atlassian-cli/config
 ```
+
+The CLI looks for credentials in this order (first match wins):
+
+1. `$ATLASSIAN_CLI_CONFIG` (explicit path override)
+2. `./.env` in the current working directory
+3. `$XDG_CONFIG_HOME/atlassian-cli/config` (defaults to `~/.config/atlassian-cli/config`)
+4. `~/.atlassian-cli/config`
+5. Environment variables (`ATLASSIAN_URL`, `ATLASSIAN_EMAIL`, `ATLASSIAN_TOKEN`)
 
 Get your API token at https://id.atlassian.com/manage-profile/security/api-tokens
 
-> Legacy `CONFLUENCE_URL` / `CONFLUENCE_EMAIL` / `CONFLUENCE_TOKEN` env vars are also supported.
+> Legacy `CONFLUENCE_URL` / `CONFLUENCE_EMAIL` / `CONFLUENCE_TOKEN` are also supported.
 
 ## Confluence CLI
 

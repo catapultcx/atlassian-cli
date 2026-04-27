@@ -60,8 +60,47 @@ class TestGetConfig:
         url, _, _ = get_config()
         assert url == "https://test.atlassian.net"
 
+    def test_loads_from_xdg_config(self, monkeypatch, tmp_path):
+        xdg = tmp_path / "xdg"
+        cfg = xdg / "atlassian-cli" / "config"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(
+            "ATLASSIAN_URL=https://xdg.atlassian.net\n"
+            "ATLASSIAN_EMAIL=xdg@test.com\n"
+            "ATLASSIAN_TOKEN=xdgtok\n"
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+        monkeypatch.delenv("ATLASSIAN_CLI_CONFIG", raising=False)
+        url, email, token = get_config()
+        assert url == "https://xdg.atlassian.net"
+        assert email == "xdg@test.com"
+        assert token == "xdgtok"
+
+    def test_explicit_override_wins(self, monkeypatch, tmp_path):
+        override = tmp_path / "override.env"
+        override.write_text(
+            "ATLASSIAN_URL=https://override.atlassian.net\n"
+            "ATLASSIAN_EMAIL=o@t.com\n"
+            "ATLASSIAN_TOKEN=otok\n"
+        )
+        # cwd has a .env that should be ignored when override is set
+        (tmp_path / ".env").write_text(
+            "ATLASSIAN_URL=https://cwd.atlassian.net\n"
+            "ATLASSIAN_EMAIL=c@t.com\n"
+            "ATLASSIAN_TOKEN=ctok\n"
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("ATLASSIAN_CLI_CONFIG", str(override))
+        url, _, _ = get_config()
+        assert url == "https://override.atlassian.net"
+
     def test_exits_when_missing(self, monkeypatch, tmp_path):
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+        monkeypatch.delenv("ATLASSIAN_CLI_CONFIG", raising=False)
         monkeypatch.delenv("ATLASSIAN_URL", raising=False)
         monkeypatch.delenv("ATLASSIAN_EMAIL", raising=False)
         monkeypatch.delenv("ATLASSIAN_TOKEN", raising=False)
