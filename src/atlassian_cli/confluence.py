@@ -212,6 +212,58 @@ def cmd_create(args):
     emit('OK', f'Created {result.get("title", args.title)} ({page_id})')
 
 
+def _modify_page_metadata(session, base, page_id, *,
+                          new_title=None, new_parent_id=None, message=None):
+    """Update a page's title and/or parentId without touching the body.
+
+    Confluence has no dedicated 'move' or 'rename' endpoint — both go through
+    PUT /pages/{id}, which requires the full body and a bumped version. Here
+    we fetch the current state and round-trip it with the requested changes.
+    """
+    remote = get_page(session, base, page_id)
+    current_title = remote.get('title', '')
+    title = new_title if new_title is not None else current_title
+    body_value = remote.get('body', {}).get('atlas_doc_format', {}).get('value')
+    if body_value is None:
+        body_value = {'type': 'doc', 'version': 1, 'content': []}
+    body_payload = {
+        'representation': 'atlas_doc_format',
+        'value': json.dumps(body_value) if not isinstance(body_value, str) else body_value,
+    }
+    new_version = _ver(remote) + 1
+    payload = {
+        'id': str(page_id),
+        'status': 'current',
+        'title': title,
+        'body': body_payload,
+        'version': {'number': new_version, 'message': message or 'Metadata updated'},
+    }
+    if new_parent_id is not None:
+        payload['parentId'] = str(new_parent_id)
+    api_put(session, base, f'{V2}/pages/{page_id}', payload)
+    return title, new_version
+
+
+def cmd_move(args):
+    session, base = setup()
+    new_title, new_version = _modify_page_metadata(
+        session, base, args.page_id,
+        new_parent_id=args.parent_id,
+        message=getattr(args, 'message', None) or f'Moved under parent {args.parent_id}',
+    )
+    emit('OK', f'Moved {args.page_id} ({new_title}) -> parent {args.parent_id} (v{new_version})')
+
+
+def cmd_rename(args):
+    session, base = setup()
+    new_title, new_version = _modify_page_metadata(
+        session, base, args.page_id,
+        new_title=args.title,
+        message=getattr(args, 'message', None) or f'Renamed to {args.title!r}',
+    )
+    emit('OK', f'Renamed {args.page_id} -> {new_title!r} (v{new_version})')
+
+
 def cmd_delete(args):
     session, base = setup()
     page = get_page(session, base, args.page_id)
@@ -903,6 +955,18 @@ def main():
     p = sub.add_parser('delete', help='Delete a page')
     p.add_argument('page_id', help='Confluence page ID')
     p.set_defaults(func=cmd_delete)
+
+    p = sub.add_parser('move', help='Move a page to a new parent (preserves body)')
+    p.add_argument('page_id', help='Confluence page ID to move')
+    p.add_argument('parent_id', help='New parent page ID')
+    p.add_argument('--message', '-m', help='Version message')
+    p.set_defaults(func=cmd_move)
+
+    p = sub.add_parser('rename', help='Rename a page (preserves body and parent)')
+    p.add_argument('page_id', help='Confluence page ID')
+    p.add_argument('title', help='New page title')
+    p.add_argument('--message', '-m', help='Version message')
+    p.set_defaults(func=cmd_rename)
 
     p = sub.add_parser('put', help='Upload local ADF to Confluence')
     p.add_argument('page_id', help='Confluence page ID')
