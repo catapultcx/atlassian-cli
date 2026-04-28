@@ -72,10 +72,15 @@ def get_space(session, base, *, key=None, space_id=None):
     return space
 
 
-def list_pages(session, base, space_id):
-    """Cursor-paginated listing of all pages in a space."""
+def list_pages(session, base, space_id, statuses=('current',)):
+    """Cursor-paginated listing of pages in a space, filtered by status.
+
+    The V2 default returns *all* statuses (current, archived, draft, deleted)
+    which is rarely what callers want. We default to current-only and let the
+    caller widen the filter if needed."""
     pages = []
-    url = f'{base}{V2}/spaces/{space_id}/pages?limit=250&sort=id'
+    status_q = '&'.join(f'status={s}' for s in statuses)
+    url = f'{base}{V2}/spaces/{space_id}/pages?limit=250&sort=id&{status_q}'
     while url:
         resp = _retry(session.get, url)
         resp.raise_for_status()
@@ -431,11 +436,12 @@ def cmd_index(args):
     spaces = args.space if args.space else ['POL', 'COMPLY']
     index = {}
 
+    statuses = ('current', 'archived') if args.include_archived else ('current',)
     for space_key in spaces:
         space = get_space(session, base, key=space_key)
         space_id = space['id']
         print(f'Indexing {space_key}…', file=sys.stderr)
-        pages = list_pages(session, base, space_id)
+        pages = list_pages(session, base, space_id, statuses=statuses)
 
         index[space_key] = []
         for page in pages:
@@ -445,6 +451,7 @@ def cmd_index(args):
                 'parentId': page.get('parentId', ''),
                 'version': _ver(page),
                 'updatedAt': _ver_ts(page),
+                'status': page.get('status', 'current'),
             })
         print(f'  {space_key}: {len(pages)} pages', file=sys.stderr)
 
@@ -995,6 +1002,8 @@ def main():
     p = sub.add_parser('index', help='Rebuild page-index.json from API')
     p.add_argument('--space', action='append', help='Space key(s) to index (default: POL COMPLY)')
     p.add_argument('--output', default='page-index.json', help='Output file (default: page-index.json)')
+    p.add_argument('--include-archived', action='store_true',
+                   help='Also include archived pages (default is current only)')
     p.set_defaults(func=cmd_index)
 
     p = sub.add_parser('comments', help='List comments on a page')
