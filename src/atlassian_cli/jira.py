@@ -48,6 +48,8 @@ def main():
     p.add_argument('--labels', nargs='*', help='Labels')
     p.add_argument('--assignee', help='Assignee account ID')
     p.add_argument('--parent', help='Parent issue key (for sub-tasks)')
+    p.add_argument('--fields', help='JSON string of additional fields '
+                                    '(e.g. components, custom fields, ADF description)')
     p.set_defaults(func=jira_issues.cmd_create)
 
     p = issue_sub.add_parser('update', help='Update issue fields')

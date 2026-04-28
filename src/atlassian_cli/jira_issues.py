@@ -34,6 +34,12 @@ def _text_adf(text):
 def cmd_get(args):
     session, base = setup()
     data = api_get(session, base, f'{V3}/issue/{args.key}')
+    if is_json_mode():
+        # preserve the full API response so callers can read components,
+        # custom fields, finding type, etc.
+        emit_json(data)
+        return
+
     fields = data.get('fields', {})
     key = data['key']
     status = fields.get('status', {}).get('name', '?')
@@ -47,24 +53,14 @@ def cmd_get(args):
     updated = fields.get('updated', '')[:10]
     description = fields.get('description')
 
-    json_data = {
-        'key': key, 'id': data['id'], 'status': status, 'summary': summary,
-        'type': issue_type, 'assignee': assignee_name, 'labels': labels,
-        'priority': priority, 'created': created, 'updated': updated,
-        'description': adf_to_markdown(description) if description else None,
-    }
-
-    if is_json_mode():
-        emit_json(json_data)
-    else:
-        print(f'{key} [{status}] {summary}')
-        print(f'  Type: {issue_type}  Priority: {priority}  Assignee: {assignee_name}')
-        if labels:
-            print(f'  Labels: {", ".join(labels)}')
-        print(f'  Created: {created}  Updated: {updated}')
-        if description:
-            print()
-            print(adf_to_markdown(description))
+    print(f'{key} [{status}] {summary}')
+    print(f'  Type: {issue_type}  Priority: {priority}  Assignee: {assignee_name}')
+    if labels:
+        print(f'  Labels: {", ".join(labels)}')
+    print(f'  Created: {created}  Updated: {updated}')
+    if description:
+        print()
+        print(adf_to_markdown(description))
 
 
 def cmd_create(args):
@@ -82,6 +78,10 @@ def cmd_create(args):
         fields['assignee'] = {'accountId': args.assignee}
     if args.parent:
         fields['parent'] = {'key': args.parent}
+    if getattr(args, 'fields', None):
+        # extra fields override the convenience flags above; useful for
+        # components, finding-type custom fields, full-ADF descriptions, etc.
+        fields.update(json.loads(args.fields))
 
     result = api_post(session, base, f'{V3}/issue', {'fields': fields})
     emit('OK', f'Created {result["key"]}', data=result)
@@ -146,7 +146,13 @@ def _search_page(session, base, jql, max_results, fields, next_page_token=None):
 
 def cmd_search(args):
     session, base = setup()
-    fields = args.fields.split(',')
+    # In JSON mode, default to '*all' so callers see components and custom
+    # fields. The user can still narrow via an explicit --fields.
+    user_explicit_fields = args.fields != 'summary,status,assignee,issuetype'
+    if is_json_mode() and not user_explicit_fields:
+        fields = ['*all']
+    else:
+        fields = args.fields.split(',')
     all_issues = []
     token = None
 
@@ -162,19 +168,21 @@ def cmd_search(args):
         if not args.all and len(all_issues) >= args.max:
             break
 
-    for issue in all_issues:
-        f = issue.get('fields', {})
-        status = f.get('status', {}).get('name', '?')
-        summary = f.get('summary', '')
-        assignee = f.get('assignee', {})
-        assignee_name = assignee.get('displayName', '') if assignee else ''
-        extra = f'  ({assignee_name})' if assignee_name else ''
-        print(f'{issue["key"]} [{status}] {summary}{extra}')
+    if not is_json_mode():
+        for issue in all_issues:
+            f = issue.get('fields', {})
+            status = f.get('status', {}).get('name', '?')
+            summary = f.get('summary', '')
+            assignee = f.get('assignee', {})
+            assignee_name = assignee.get('displayName', '') if assignee else ''
+            extra = f'  ({assignee_name})' if assignee_name else ''
+            print(f'{issue["key"]} [{status}] {summary}{extra}')
 
     if args.dump:
         with open(args.dump, 'w') as fh:
             json.dump({'total': len(all_issues), 'issues': all_issues}, fh, indent=2)
-        print(f'Saved {len(all_issues)} issues to {args.dump}')
+        if not is_json_mode():
+            print(f'Saved {len(all_issues)} issues to {args.dump}')
 
     emit('DONE', f'{len(all_issues)} issues found',
          data={'total': len(all_issues), 'issues': all_issues})
