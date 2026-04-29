@@ -218,12 +218,18 @@ def cmd_create(args):
 
 
 def _modify_page_metadata(session, base, page_id, *,
-                          new_title=None, new_parent_id=None, message=None):
-    """Update a page's title and/or parentId without touching the body.
+                          new_title=None, new_parent_id=None, new_space_id=None,
+                          message=None):
+    """Update a page's title, parentId and/or spaceId without touching the body.
 
     Confluence has no dedicated 'move' or 'rename' endpoint — both go through
     PUT /pages/{id}, which requires the full body and a bumped version. Here
     we fetch the current state and round-trip it with the requested changes.
+
+    Setting `new_space_id` moves the page to a different space (cross-space
+    move). If you cross spaces you also need a parent in the destination
+    space (Confluence doesn't allow space-root pages via this endpoint), so
+    callers should normally pass new_parent_id alongside new_space_id.
     """
     remote = get_page(session, base, page_id)
     current_title = remote.get('title', '')
@@ -245,18 +251,29 @@ def _modify_page_metadata(session, base, page_id, *,
     }
     if new_parent_id is not None:
         payload['parentId'] = str(new_parent_id)
+    if new_space_id is not None:
+        payload['spaceId'] = str(new_space_id)
     api_put(session, base, f'{V2}/pages/{page_id}', payload)
     return title, new_version
 
 
 def cmd_move(args):
     session, base = setup()
+    space_id = getattr(args, 'space_id', None)
+    msg = getattr(args, 'message', None)
+    if space_id:
+        msg = msg or f'Moved to space {space_id} under parent {args.parent_id}'
+    else:
+        msg = msg or f'Moved under parent {args.parent_id}'
     new_title, new_version = _modify_page_metadata(
         session, base, args.page_id,
         new_parent_id=args.parent_id,
-        message=getattr(args, 'message', None) or f'Moved under parent {args.parent_id}',
+        new_space_id=space_id,
+        message=msg,
     )
-    emit('OK', f'Moved {args.page_id} ({new_title}) -> parent {args.parent_id} (v{new_version})')
+    suffix = f' in space {space_id}' if space_id else ''
+    emit('OK',
+         f'Moved {args.page_id} ({new_title}) -> parent {args.parent_id}{suffix} (v{new_version})')
 
 
 def cmd_rename(args):
@@ -267,6 +284,30 @@ def cmd_rename(args):
         message=getattr(args, 'message', None) or f'Renamed to {args.title!r}',
     )
     emit('OK', f'Renamed {args.page_id} -> {new_title!r} (v{new_version})')
+
+
+def cmd_archive(args):
+    """Archive a page (and optionally its descendants) via the V2 bulk
+    archive endpoint."""
+    session, base = setup()
+    body = {'pages': [{'id': str(args.page_id)}]}
+    result = api_post(session, base, f'{V2}/pages/archive', body)
+    # The endpoint returns a long-running task descriptor; the page becomes
+    # archived asynchronously. We surface the task link so the caller can
+    # poll if they need confirmation.
+    links = result.get('links', {}) if isinstance(result, dict) else {}
+    status_link = links.get('status', '')
+    emit('OK', f'Archive submitted for {args.page_id}', data={'task': status_link})
+
+
+def cmd_unarchive(args):
+    """Restore a previously archived page via the V2 bulk restore endpoint."""
+    session, base = setup()
+    body = {'pages': [{'id': str(args.page_id)}]}
+    result = api_post(session, base, f'{V2}/pages/restore', body)
+    links = result.get('links', {}) if isinstance(result, dict) else {}
+    status_link = links.get('status', '')
+    emit('OK', f'Restore submitted for {args.page_id}', data={'task': status_link})
 
 
 def cmd_delete(args):
@@ -436,7 +477,7 @@ def cmd_index(args):
     spaces = args.space if args.space else ['POL', 'COMPLY']
     index = {}
 
-    statuses = ('current', 'archived') if args.include_archived else ('current',)
+    statuses = ('current', 'archived') if getattr(args, 'include_archived', False) else ('current',)
     for space_key in spaces:
         space = get_space(session, base, key=space_key)
         space_id = space['id']
@@ -963,9 +1004,11 @@ def main():
     p.add_argument('page_id', help='Confluence page ID')
     p.set_defaults(func=cmd_delete)
 
-    p = sub.add_parser('move', help='Move a page to a new parent (preserves body)')
+    p = sub.add_parser('move', help='Move a page to a new parent (preserves body); '
+                                    'optionally to a different space')
     p.add_argument('page_id', help='Confluence page ID to move')
     p.add_argument('parent_id', help='New parent page ID')
+    p.add_argument('--space-id', help='Destination space ID (cross-space move)')
     p.add_argument('--message', '-m', help='Version message')
     p.set_defaults(func=cmd_move)
 
@@ -974,6 +1017,14 @@ def main():
     p.add_argument('title', help='New page title')
     p.add_argument('--message', '-m', help='Version message')
     p.set_defaults(func=cmd_rename)
+
+    p = sub.add_parser('archive', help='Archive a page (V2 bulk archive endpoint)')
+    p.add_argument('page_id', help='Confluence page ID to archive')
+    p.set_defaults(func=cmd_archive)
+
+    p = sub.add_parser('unarchive', help='Restore an archived page')
+    p.add_argument('page_id', help='Confluence page ID to restore')
+    p.set_defaults(func=cmd_unarchive)
 
     p = sub.add_parser('put', help='Upload local ADF to Confluence')
     p.add_argument('page_id', help='Confluence page ID')
