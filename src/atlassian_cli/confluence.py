@@ -287,27 +287,18 @@ def cmd_rename(args):
 
 
 def cmd_archive(args):
-    """Archive a page (and optionally its descendants) via the V2 bulk
-    archive endpoint."""
+    """Archive a page (and any descendants) via the V1 bulk-archive endpoint.
+
+    The V2 API does not currently expose a working archive endpoint — the
+    Confluence UI itself uses ``POST /wiki/rest/api/content/archive`` (V1),
+    which returns 202 Accepted with a longtask handle. Archival completes
+    asynchronously; we return the task link so callers can poll if needed.
+    """
     session, base = setup()
     body = {'pages': [{'id': str(args.page_id)}]}
-    result = api_post(session, base, f'{V2}/pages/archive', body)
-    # The endpoint returns a long-running task descriptor; the page becomes
-    # archived asynchronously. We surface the task link so the caller can
-    # poll if they need confirmation.
-    links = result.get('links', {}) if isinstance(result, dict) else {}
-    status_link = links.get('status', '')
-    emit('OK', f'Archive submitted for {args.page_id}', data={'task': status_link})
-
-
-def cmd_unarchive(args):
-    """Restore a previously archived page via the V2 bulk restore endpoint."""
-    session, base = setup()
-    body = {'pages': [{'id': str(args.page_id)}]}
-    result = api_post(session, base, f'{V2}/pages/restore', body)
-    links = result.get('links', {}) if isinstance(result, dict) else {}
-    status_link = links.get('status', '')
-    emit('OK', f'Restore submitted for {args.page_id}', data={'task': status_link})
+    result = api_post(session, base, '/wiki/rest/api/content/archive', body)
+    task = (result or {}).get('links', {}).get('status', '')
+    emit('OK', f'Archive submitted for {args.page_id}', data={'task': task})
 
 
 def cmd_delete(args):
@@ -1018,13 +1009,9 @@ def main():
     p.add_argument('--message', '-m', help='Version message')
     p.set_defaults(func=cmd_rename)
 
-    p = sub.add_parser('archive', help='Archive a page (V2 bulk archive endpoint)')
+    p = sub.add_parser('archive', help='Archive a page and its descendants')
     p.add_argument('page_id', help='Confluence page ID to archive')
     p.set_defaults(func=cmd_archive)
-
-    p = sub.add_parser('unarchive', help='Restore an archived page')
-    p.add_argument('page_id', help='Confluence page ID to restore')
-    p.set_defaults(func=cmd_unarchive)
 
     p = sub.add_parser('put', help='Upload local ADF to Confluence')
     p.add_argument('page_id', help='Confluence page ID')
