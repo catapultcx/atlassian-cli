@@ -1,17 +1,36 @@
 #!/usr/bin/env python3
-"""Confluence Cloud CLI — fast ADF page management via REST API v2.
+"""Confluence Cloud CLI — fast ADF page and blog-post management via REST API v2.
 
 Commands:
-    get      Download a page (ADF + metadata)
-    put      Upload local ADF to Confluence
-    diff     Compare local vs remote ADF
-    sync     Bulk-download all pages in a space
-    delete   Delete a page
-    search   Search local page index
-    index    Rebuild page-index.json from API
-    comments List inline and footer comments on a page
-    comment  Reply to a comment
-    resolve  Resolve an inline comment
+    Pages:
+        get          Download a page (ADF + metadata)
+        create       Create a new page
+        put          Upload local ADF to Confluence
+        diff         Compare local vs remote ADF
+        sync         Bulk-download all pages in a space
+        delete       Delete a page
+        move         Move a page to a new parent (optionally cross-space)
+        rename       Rename a page
+        archive      Archive a page and its descendants
+        search       Search local page index
+        index        Rebuild page-index.json from API
+    Blog Posts:
+        blog-create  Create a blog post
+        blog-get     Download a blog post (ADF + metadata)
+        blog-update  Update a blog post title and/or body
+        blog-delete  Delete a blog post
+        blog-list    List blog posts in a space
+        blog-put     Upload local ADF for a blog post
+    Comments:
+        comments     List inline and footer comments on a page
+        comment      Reply to a comment
+        resolve      Resolve an inline comment
+    Other:
+        hints        Show hints for working with ADF and Confluence macros
+        changes      Show what changed in the latest version of a page
+        approvals    List pages pending your approval
+        approve      Approve a page
+        reject       Reject a page approval
 """
 
 import argparse
@@ -92,6 +111,124 @@ def list_pages(session, base, space_id, statuses=('current',)):
         else:
             url = None
     return pages
+
+
+# ---------------------------------------------------------------------------
+# Blog posts (v2)
+# ---------------------------------------------------------------------------
+
+def create_blogpost(session, base, space_id, title, *, body=None, file=None):
+    """Create a blog post in a Confluence space."""
+    body_payload = {}
+    if file:
+        with open(file) as f:
+            adf = json.load(f)
+        body_payload = {
+            'representation': 'atlas_doc_format',
+            'value': json.dumps(adf),
+        }
+    elif body:
+        body_payload = {
+            'representation': 'atlas_doc_format',
+            'value': json.dumps({
+                'type': 'doc', 'version': 1,
+                'content': [{'type': 'paragraph',
+                             'content': [{'type': 'text', 'text': body}]}],
+            }),
+        }
+
+    payload = {
+        'spaceId': space_id,
+        'title': title,
+        'status': 'current',
+    }
+    if body_payload:
+        payload['body'] = body_payload
+
+    return api_post(session, base, f'{V2}/blogposts', payload)
+
+
+def get_blogpost(session, base, blogpost_id):
+    """Fetch a single blog post with ADF body."""
+    data = api_get(session, base, f'{V2}/blogposts/{blogpost_id}',
+                   **{'body-format': 'atlas_doc_format'})
+    body = data.get('body', {}).get('atlas_doc_format', {})
+    if isinstance(body.get('value'), str):
+        try:
+            body['value'] = json.loads(body['value'])
+        except json.JSONDecodeError:
+            pass
+    return data
+
+
+def update_blogpost(session, base, blogpost_id, *,
+                    title=None, body=None, file=None, message=None):
+    """Update a blog post's title and/or body."""
+    remote = get_blogpost(session, base, blogpost_id)
+
+    new_title = title if title is not None else remote.get('title', '')
+    new_version = _ver(remote) + 1
+
+    body_payload = None
+    if file:
+        with open(file) as f:
+            adf = json.load(f)
+        body_payload = {
+            'representation': 'atlas_doc_format',
+            'value': json.dumps(adf),
+        }
+    elif body is not None:
+        body_payload = {
+            'representation': 'atlas_doc_format',
+            'value': json.dumps({
+                'type': 'doc', 'version': 1,
+                'content': [{'type': 'paragraph',
+                             'content': [{'type': 'text', 'text': body}]}],
+            }),
+        }
+    else:
+        body_value = remote.get('body', {}).get('atlas_doc_format', {}).get('value')
+        if body_value is not None:
+            body_payload = {
+                'representation': 'atlas_doc_format',
+                'value': json.dumps(body_value) if not isinstance(body_value, str) else body_value,
+            }
+
+    payload = {
+        'id': str(blogpost_id),
+        'status': 'current',
+        'title': new_title,
+        'version': {'number': new_version,
+                     'message': message or 'Updated blog post'},
+    }
+    if body_payload:
+        payload['body'] = body_payload
+
+    api_put(session, base, f'{V2}/blogposts/{blogpost_id}', payload)
+    return new_title, new_version
+
+
+def delete_blogpost(session, base, blogpost_id):
+    """Delete a blog post."""
+    api_delete(session, base, f'{V2}/blogposts/{blogpost_id}')
+
+
+def list_blogposts(session, base, space_id, statuses=('current',)):
+    """Cursor-paginated listing of blog posts in a space, filtered by status."""
+    blogposts = []
+    status_q = '&'.join(f'status={s}' for s in statuses)
+    url = f'{base}{V2}/spaces/{space_id}/blogposts?limit=250&sort=id&{status_q}'
+    while url:
+        resp = _retry(session.get, url)
+        resp.raise_for_status()
+        data = resp.json()
+        blogposts.extend(data.get('results', []))
+        next_link = data.get('_links', {}).get('next')
+        if next_link:
+            url = f'{base}{next_link}' if next_link.startswith('/') else next_link
+        else:
+            url = None
+    return blogposts
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +444,178 @@ def cmd_delete(args):
     title = page.get('title', args.page_id)
     api_delete(session, base, f'{V2}/pages/{args.page_id}')
     emit('OK', f'Deleted {title} ({args.page_id})')
+
+
+# ---------------------------------------------------------------------------
+# Blog post commands
+# ---------------------------------------------------------------------------
+
+def _save_blogpost(page_data, space_key, pages_dir, suffix=''):
+    blogpost_id = page_data['id']
+    space_dir = os.path.join(pages_dir, space_key)
+    os.makedirs(space_dir, exist_ok=True)
+
+    body = page_data.get('body', {}).get('atlas_doc_format', {}).get('value', {})
+    filename = f'blog-{blogpost_id}{suffix}.json'
+    adf_path = os.path.join(space_dir, filename)
+    with open(adf_path, 'w') as f:
+        json.dump(body, f, indent=2)
+
+    meta = {
+        'id': blogpost_id,
+        'title': page_data.get('title', ''),
+        'spaceId': page_data.get('spaceId', ''),
+        'spaceKey': space_key,
+        'version': _ver(page_data),
+        'updatedAt': _ver_ts(page_data),
+    }
+    meta_filename = f'blog-{blogpost_id}{suffix}.meta.json'
+    meta_path = os.path.join(space_dir, meta_filename)
+    with open(meta_path, 'w') as f:
+        json.dump(meta, f, indent=2)
+
+    return adf_path, meta_path
+
+
+def _load_blog_meta(blogpost_id, pages_dir):
+    if not os.path.isdir(pages_dir):
+        return None
+    for entry in os.listdir(pages_dir):
+        candidate = os.path.join(pages_dir, entry, f'blog-{blogpost_id}.meta.json')
+        if os.path.isfile(candidate):
+            with open(candidate) as f:
+                return json.load(f)
+    return None
+
+
+def _load_blog_adf(blogpost_id, pages_dir):
+    if not os.path.isdir(pages_dir):
+        return None
+    for entry in os.listdir(pages_dir):
+        candidate = os.path.join(pages_dir, entry, f'blog-{blogpost_id}.json')
+        if os.path.isfile(candidate):
+            with open(candidate) as f:
+                return json.load(f)
+    return None
+
+
+def cmd_blog_create(args):
+    session, base = setup()
+    space = get_space(session, base, key=args.space_key)
+    space_id = space['id']
+    space_key = space.get('key', args.space_key)
+
+    result = create_blogpost(session, base, space_id, args.title,
+                             body=args.body, file=args.file)
+    blogpost_id = result['id']
+
+    if args.dir:
+        full_post = get_blogpost(session, base, blogpost_id)
+        _save_blogpost(full_post, space_key, args.dir)
+
+    emit('OK', f'Created {result.get("title", args.title)} ({blogpost_id})')
+
+
+def cmd_blog_get(args):
+    session, base = setup()
+    blogpost = get_blogpost(session, base, args.blogpost_id)
+    space = get_space(session, base, space_id=blogpost['spaceId'])
+    space_key = space.get('key', str(blogpost['spaceId']))
+    adf_path, _ = _save_blogpost(blogpost, space_key, args.dir)
+    emit('OK', f'{blogpost["title"]} (v{_ver(blogpost)}) -> {adf_path}')
+
+
+def cmd_blog_update(args):
+    session, base = setup()
+    new_title, new_version = update_blogpost(
+        session, base, args.blogpost_id,
+        title=args.title, body=args.body, file=args.file,
+        message=getattr(args, 'message', None),
+    )
+
+    if args.dir:
+        full_post = get_blogpost(session, base, args.blogpost_id)
+        space = get_space(session, base, space_id=full_post['spaceId'])
+        _save_blogpost(full_post, space.get('key', ''), args.dir)
+
+    emit('OK', f'Updated blog post {args.blogpost_id} -> {new_title!r} (v{new_version})')
+
+
+def cmd_blog_delete(args):
+    session, base = setup()
+    blogpost = get_blogpost(session, base, args.blogpost_id)
+    title = blogpost.get('title', args.blogpost_id)
+    delete_blogpost(session, base, args.blogpost_id)
+    emit('OK', f'Deleted blog post {title} ({args.blogpost_id})')
+
+
+def cmd_blog_list(args):
+    session, base = setup()
+    space = get_space(session, base, key=args.space_key)
+    space_id = space['id']
+    space_key = space.get('key', args.space_key)
+
+    statuses = ('current',) if not getattr(args, 'include_draft', False) else ('current', 'draft')
+    blogposts = list_blogposts(session, base, space_id, statuses=statuses)
+
+    if is_json_mode():
+        emit_json([{
+            'id': b['id'],
+            'title': b.get('title', ''),
+            'version': _ver(b),
+            'updatedAt': _ver_ts(b),
+            'status': b.get('status', 'current'),
+        } for b in blogposts])
+    else:
+        for b in blogposts:
+            print(f'{b["id"]} [{b.get("status", "current")}] {b.get("title", "")}  (v{_ver(b)})')
+        emit('DONE', f'{len(blogposts)} blog post(s) in {space_key}')
+
+
+def cmd_blog_put(args):
+    session, base = setup()
+
+    meta = _load_blog_meta(args.blogpost_id, args.dir)
+    if not meta:
+        emit_error(f'No local metadata for blog post {args.blogpost_id}')
+        sys.exit(1)
+    adf = _load_blog_adf(args.blogpost_id, args.dir)
+    if not adf:
+        emit_error(f'No local ADF for blog post {args.blogpost_id}')
+        sys.exit(1)
+
+    remote = get_blogpost(session, base, args.blogpost_id)
+    remote_ver = _ver(remote)
+    local_ver = meta.get('version', 0)
+
+    if not args.force and remote_ver != local_ver:
+        emit_error(f'Version conflict: local v{local_ver}, remote v{remote_ver}. Use --force to overwrite.')
+        sys.exit(1)
+
+    new_version = remote_ver + 1
+    payload = {
+        'id': str(args.blogpost_id),
+        'status': 'current',
+        'title': meta['title'],
+        'body': {
+            'representation': 'atlas_doc_format',
+            'value': json.dumps(adf),
+        },
+        'version': {
+            'number': new_version,
+            'message': getattr(args, 'message', None) or 'Updated via confluence CLI',
+        },
+    }
+    result = api_put(session, base, f'{V2}/blogposts/{args.blogpost_id}', payload)
+
+    meta['version'] = new_version
+    meta['updatedAt'] = _ver_ts(result)
+    space_key = meta.get('spaceKey', '')
+    meta_path = os.path.join(args.dir, space_key, f'blog-{args.blogpost_id}.meta.json')
+    with open(meta_path, 'w') as f:
+        json.dump(meta, f, indent=2)
+
+    emit('OK', f'{meta["title"]} updated to v{new_version}')
 
 
 def cmd_put(args):
@@ -994,6 +1303,46 @@ def main():
     p = sub.add_parser('delete', help='Delete a page')
     p.add_argument('page_id', help='Confluence page ID')
     p.set_defaults(func=cmd_delete)
+
+    # -- blog posts ----------------------------------------------------------
+
+    p = sub.add_parser('blog-create', help='Create a blog post')
+    p.add_argument('space_key', help='Space key (e.g. POL, COMPLY)')
+    p.add_argument('title', help='Blog post title')
+    p.add_argument('--body', help='Plain text body')
+    p.add_argument('--file', '-f', help='ADF JSON file for blog body')
+    p.add_argument('--dir', default='pages', help='Pages directory (default: pages)')
+    p.set_defaults(func=cmd_blog_create)
+
+    p = sub.add_parser('blog-get', help='Download a blog post (ADF + metadata)')
+    p.add_argument('blogpost_id', help='Blog post ID')
+    p.add_argument('--dir', default='pages', help='Output directory (default: pages)')
+    p.set_defaults(func=cmd_blog_get)
+
+    p = sub.add_parser('blog-update', help='Update a blog post title and/or body')
+    p.add_argument('blogpost_id', help='Blog post ID')
+    p.add_argument('--title', help='New title')
+    p.add_argument('--body', help='New plain text body')
+    p.add_argument('--file', '-f', help='ADF JSON file for new blog body')
+    p.add_argument('--message', '-m', help='Version message')
+    p.add_argument('--dir', default='pages', help='Pages directory (default: pages)')
+    p.set_defaults(func=cmd_blog_update)
+
+    p = sub.add_parser('blog-delete', help='Delete a blog post')
+    p.add_argument('blogpost_id', help='Blog post ID')
+    p.set_defaults(func=cmd_blog_delete)
+
+    p = sub.add_parser('blog-list', help='List blog posts in a space')
+    p.add_argument('space_key', help='Space key (e.g. POL, COMPLY)')
+    p.add_argument('--include-draft', action='store_true', help='Include draft blog posts')
+    p.set_defaults(func=cmd_blog_list)
+
+    p = sub.add_parser('blog-put', help='Upload local ADF for a blog post')
+    p.add_argument('blogpost_id', help='Blog post ID')
+    p.add_argument('--dir', default='pages', help='Pages directory (default: pages)')
+    p.add_argument('--force', action='store_true', help='Skip version conflict check')
+    p.add_argument('--message', '-m', help='Version message (shown in history)')
+    p.set_defaults(func=cmd_blog_put)
 
     p = sub.add_parser('move', help='Move a page to a new parent (preserves body); '
                                     'optionally to a different space')

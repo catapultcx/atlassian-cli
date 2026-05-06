@@ -96,6 +96,36 @@ pages/
 page-index.json              # searchable index
 ```
 
+### Blog posts
+
+Create, read, update, and delete blog posts in any Confluence space.
+
+```bash
+# Create a blog post
+confluence blog-create POL "Q1 Product Update"
+confluence blog-create POL "Release Notes" --body "What's new this quarter..."
+confluence blog-create POL "Deep Dive" --file /path/to/adf.json
+
+# Download a blog post
+confluence blog-get 123456
+
+# Edit locally and upload
+confluence blog-get 123456
+# ... edit the ADF JSON file ...
+confluence blog-put 123456 --message "Added screenshots"
+
+# Update title and/or body directly
+confluence blog-update 123456 --title "Q1 Update (Revised)"
+confluence blog-update 123456 --body "Updated content here" -m "Corrections"
+
+# List blog posts in a space
+confluence blog-list POL
+confluence blog-list POL --include-draft
+
+# Delete a blog post
+confluence blog-delete 123456
+```
+
 ### Comments
 
 Read, reply to, and resolve inline and footer comments on pages.

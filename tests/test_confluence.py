@@ -12,12 +12,20 @@ from atlassian_cli.confluence import (
     _make_adf_body,
     _ver,
     _ver_ts,
+    cmd_blog_create,
+    cmd_blog_delete,
+    cmd_blog_get,
+    cmd_blog_list,
+    cmd_blog_update,
     cmd_diff,
     cmd_get,
     cmd_index,
     cmd_search,
+    create_blogpost,
+    get_blogpost,
     get_page,
     get_space,
+    list_blogposts,
     list_comment_replies,
     list_comments,
     list_pages,
@@ -26,6 +34,7 @@ from atlassian_cli.confluence import (
     reply_to_comment,
     resolve_comment,
     save_page,
+    update_blogpost,
 )
 from atlassian_cli.output import set_json_mode
 
@@ -388,3 +397,195 @@ class TestCmdIndex:
         with open(output_path) as f:
             index = json.load(f)
         assert len(index["TEST"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Blog post tests
+# ---------------------------------------------------------------------------
+
+BLOG_SAMPLE = {
+    "id": "55555",
+    "title": "Test Blog Post",
+    "spaceId": "100",
+    "status": "current",
+    "version": {"number": 1, "createdAt": "2025-02-01T10:00:00Z"},
+    "body": {
+        "atlas_doc_format": {
+            "value": {"type": "doc", "version": 1, "content": [
+                {"type": "paragraph", "content": [{"type": "text", "text": "Blog content"}]}
+            ]},
+        },
+    },
+}
+
+
+class TestCreateBlogpost:
+    @responses.activate
+    def test_creates_blogpost(self, mock_session):
+        responses.add(
+            responses.POST, f"{BASE}{V2}/blogposts",
+            json=BLOG_SAMPLE,
+        )
+        result = create_blogpost(mock_session, BASE, "100", "Test Blog Post",
+                                 body="Blog content")
+        assert result["id"] == "55555"
+        assert result["title"] == "Test Blog Post"
+
+    @responses.activate
+    def test_creates_with_file(self, mock_session, tmp_path):
+        adf_file = tmp_path / "blog.adf.json"
+        adf_file.write_text(json.dumps(BLOG_SAMPLE["body"]["atlas_doc_format"]["value"]))
+        responses.add(
+            responses.POST, f"{BASE}{V2}/blogposts",
+            json=BLOG_SAMPLE,
+        )
+        result = create_blogpost(mock_session, BASE, "100", "Test Blog Post",
+                                 file=str(adf_file))
+        assert result["id"] == "55555"
+
+
+class TestGetBlogpost:
+    @responses.activate
+    def test_fetches_blogpost(self, mock_session):
+        responses.add(
+            responses.GET, f"{BASE}{V2}/blogposts/55555",
+            json=BLOG_SAMPLE,
+        )
+        result = get_blogpost(mock_session, BASE, "55555")
+        assert result["id"] == "55555"
+        assert isinstance(result["body"]["atlas_doc_format"]["value"], dict)
+
+
+class TestListBlogposts:
+    @responses.activate
+    def test_lists_blogposts(self, mock_session):
+        responses.add(
+            responses.GET, f"{BASE}{V2}/spaces/100/blogposts",
+            json={"results": [BLOG_SAMPLE], "_links": {}},
+        )
+        result = list_blogposts(mock_session, BASE, "100")
+        assert len(result) == 1
+        assert result[0]["id"] == "55555"
+
+
+class TestCmdBlogCreate:
+    @responses.activate
+    def test_creates_blogpost(self, capsys, tmp_path):
+        responses.add(
+            responses.GET, f"{BASE}{V2}/spaces",
+            json={"results": [SAMPLE_SPACE]},
+        )
+        responses.add(
+            responses.POST, f"{BASE}{V2}/blogposts",
+            json=BLOG_SAMPLE,
+        )
+        responses.add(
+            responses.GET, f"{BASE}{V2}/blogposts/55555",
+            json=BLOG_SAMPLE,
+        )
+        responses.add(
+            responses.GET, f"{BASE}{V2}/spaces/100",
+            json=SAMPLE_SPACE,
+        )
+        cmd_blog_create(Namespace(
+            space_key="TEST", title="Test Blog Post",
+            body="Blog content", file=None,
+            dir=str(tmp_path),
+        ))
+        out = capsys.readouterr().out
+        assert "Test Blog Post" in out
+        assert os.path.isfile(os.path.join(str(tmp_path), "TEST", "blog-55555.json"))
+
+
+class TestCmdBlogGet:
+    @responses.activate
+    def test_downloads_blogpost(self, capsys, tmp_path):
+        responses.add(
+            responses.GET, f"{BASE}{V2}/blogposts/55555",
+            json=BLOG_SAMPLE,
+        )
+        responses.add(
+            responses.GET, f"{BASE}{V2}/spaces/100",
+            json=SAMPLE_SPACE,
+        )
+        cmd_blog_get(Namespace(blogpost_id="55555", dir=str(tmp_path)))
+        out = capsys.readouterr().out
+        assert "Test Blog Post" in out
+        assert os.path.isfile(os.path.join(str(tmp_path), "TEST", "blog-55555.json"))
+
+
+class TestCmdBlogDelete:
+    @responses.activate
+    def test_deletes_blogpost(self, capsys):
+        responses.add(
+            responses.GET, f"{BASE}{V2}/blogposts/55555",
+            json=BLOG_SAMPLE,
+        )
+        responses.add(
+            responses.DELETE, f"{BASE}{V2}/blogposts/55555",
+            status=204,
+        )
+        cmd_blog_delete(Namespace(blogpost_id="55555"))
+        out = capsys.readouterr().out
+        assert "Deleted blog post" in out
+
+
+class TestCmdBlogList:
+    @responses.activate
+    def test_lists_blogposts(self, capsys):
+        responses.add(
+            responses.GET, f"{BASE}{V2}/spaces",
+            json={"results": [SAMPLE_SPACE]},
+        )
+        responses.add(
+            responses.GET, f"{BASE}{V2}/spaces/100/blogposts",
+            json={"results": [BLOG_SAMPLE], "_links": {}},
+        )
+        cmd_blog_list(Namespace(space_key="TEST"))
+        out = capsys.readouterr().out
+        assert "Test Blog Post" in out
+        assert "1 blog post(s)" in out
+
+
+class TestCmdBlogUpdate:
+    @responses.activate
+    def test_updates_blogpost(self, capsys, tmp_path):
+        responses.add(
+            responses.GET, f"{BASE}{V2}/blogposts/55555",
+            json=BLOG_SAMPLE,
+        )
+        responses.add(
+            responses.PUT, f"{BASE}{V2}/blogposts/55555",
+            json={**BLOG_SAMPLE, "title": "Updated Title",
+                  "version": {"number": 2, "createdAt": "2025-02-02T10:00:00Z"}},
+        )
+        responses.add(
+            responses.GET, f"{BASE}{V2}/spaces/100",
+            json=SAMPLE_SPACE,
+        )
+        cmd_blog_update(Namespace(
+            blogpost_id="55555", title="Updated Title",
+            body=None, file=None,
+            dir=str(tmp_path),
+        ))
+        out = capsys.readouterr().out
+        assert "Updated Title" in out
+        assert "(v2)" in out
+
+
+class TestUpdateBlogpost:
+    @responses.activate
+    def test_updates_title_and_body(self, mock_session):
+        responses.add(
+            responses.GET, f"{BASE}{V2}/blogposts/55555",
+            json=BLOG_SAMPLE,
+        )
+        responses.add(
+            responses.PUT, f"{BASE}{V2}/blogposts/55555",
+            json={**BLOG_SAMPLE, "title": "New Title",
+                  "version": {"number": 2, "createdAt": "2025-02-02T10:00:00Z"}},
+        )
+        title, ver = update_blogpost(mock_session, BASE, "55555",
+                                     title="New Title", body="New body")
+        assert title == "New Title"
+        assert ver == 2

@@ -227,3 +227,12 @@ ATLASSIAN_EMAIL=you@example.com
 ATLASSIAN_TOKEN=your-api-token
 ```
 Falls back to `CONFLUENCE_*` prefix for backward compat.
+
+## Releasing
+
+1. Run lint and tests: `ruff check src/ tests/ && pytest`
+2. Bump version in `pyproject.toml` (`[project] version`)
+3. Commit with message: `git commit -am "<description>"`
+4. Create and push tag to trigger PyPI publish: `git tag v<version> && git push origin main --tags`
+
+The CI `publish.yml` workflow triggers on `v*` tags and publishes to PyPI via trusted publishing. The CI `ci.yml` workflow runs on every push to main.
