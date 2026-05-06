@@ -117,7 +117,8 @@ def list_pages(session, base, space_id, statuses=('current',)):
 # Blog posts (v2)
 # ---------------------------------------------------------------------------
 
-def create_blogpost(session, base, space_id, title, *, body=None, file=None):
+def create_blogpost(session, base, space_id, title, *, body=None, file=None,
+                    created_at=None):
     """Create a blog post in a Confluence space."""
     body_payload = {}
     if file:
@@ -144,6 +145,8 @@ def create_blogpost(session, base, space_id, title, *, body=None, file=None):
     }
     if body_payload:
         payload['body'] = body_payload
+    if created_at is not None:
+        payload['createdAt'] = created_at
 
     return api_post(session, base, f'{V2}/blogposts', payload)
 
@@ -162,8 +165,9 @@ def get_blogpost(session, base, blogpost_id):
 
 
 def update_blogpost(session, base, blogpost_id, *,
-                    title=None, body=None, file=None, message=None):
-    """Update a blog post's title and/or body."""
+                    title=None, body=None, file=None, message=None,
+                    created_at=None):
+    """Update a blog post's title, body, and/or creation date."""
     remote = get_blogpost(session, base, blogpost_id)
 
     new_title = title if title is not None else remote.get('title', '')
@@ -203,6 +207,8 @@ def update_blogpost(session, base, blogpost_id, *,
     }
     if body_payload:
         payload['body'] = body_payload
+    if created_at is not None:
+        payload['createdAt'] = created_at
 
     api_put(session, base, f'{V2}/blogposts/{blogpost_id}', payload)
     return new_title, new_version
@@ -506,7 +512,8 @@ def cmd_blog_create(args):
     space_key = space.get('key', args.space_key)
 
     result = create_blogpost(session, base, space_id, args.title,
-                             body=args.body, file=args.file)
+                             body=args.body, file=args.file,
+                             created_at=getattr(args, 'created_at', None))
     blogpost_id = result['id']
 
     if args.dir:
@@ -531,6 +538,7 @@ def cmd_blog_update(args):
         session, base, args.blogpost_id,
         title=args.title, body=args.body, file=args.file,
         message=getattr(args, 'message', None),
+        created_at=getattr(args, 'created_at', None),
     )
 
     if args.dir:
@@ -1311,6 +1319,7 @@ def main():
     p.add_argument('title', help='Blog post title')
     p.add_argument('--body', help='Plain text body')
     p.add_argument('--file', '-f', help='ADF JSON file for blog body')
+    p.add_argument('--created-at', help='Creation date (ISO 8601, e.g. 2024-01-15T10:00:00Z)')
     p.add_argument('--dir', default='pages', help='Pages directory (default: pages)')
     p.set_defaults(func=cmd_blog_create)
 
@@ -1324,6 +1333,7 @@ def main():
     p.add_argument('--title', help='New title')
     p.add_argument('--body', help='New plain text body')
     p.add_argument('--file', '-f', help='ADF JSON file for new blog body')
+    p.add_argument('--created-at', help='Override creation date (ISO 8601, e.g. 2024-01-15T10:00:00Z)')
     p.add_argument('--message', '-m', help='Version message')
     p.add_argument('--dir', default='pages', help='Pages directory (default: pages)')
     p.set_defaults(func=cmd_blog_update)

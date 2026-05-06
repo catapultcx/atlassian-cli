@@ -105,6 +105,7 @@ Create, read, update, and delete blog posts in any Confluence space.
 confluence blog-create POL "Q1 Product Update"
 confluence blog-create POL "Release Notes" --body "What's new this quarter..."
 confluence blog-create POL "Deep Dive" --file /path/to/adf.json
+confluence blog-create POL "Retrospective" --body "..." --created-at 2024-01-15T10:00:00Z
 
 # Download a blog post
 confluence blog-get 123456
@@ -117,6 +118,7 @@ confluence blog-put 123456 --message "Added screenshots"
 # Update title and/or body directly
 confluence blog-update 123456 --title "Q1 Update (Revised)"
 confluence blog-update 123456 --body "Updated content here" -m "Corrections"
+confluence blog-update 123456 --created-at "2024-06-01T08:00:00Z"
 
 # List blog posts in a space
 confluence blog-list POL
