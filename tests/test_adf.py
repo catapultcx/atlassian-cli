@@ -492,3 +492,124 @@ More text.
         assert 'Test' in md_out
         assert 'world' in md_out
         assert 'item one' in md_out
+
+
+# ---------------------------------------------------------------------------
+# md_to_adf — table support
+# ---------------------------------------------------------------------------
+
+class TestMdToAdfTables:
+    def test_md_table_standard(self):
+        """Newline-separated markdown table produces valid ADF table."""
+        md = "\n".join([
+            "| Header 1 | Header 2 | Header 3 |",
+            "| --- | --- | --- |",
+            "| a | b | c |",
+            "| d | e | f |",
+        ])
+        nodes = md_to_adf(md)
+        assert len(nodes) == 1
+        t = nodes[0]
+        assert t['type'] == 'table'
+        assert 'localId' in t['attrs']
+        assert t['attrs']['localId'] != ''
+        rows = t['content']
+        assert len(rows) == 3  # header + 2 data, separator dropped
+        assert rows[0]['type'] == 'tableRow'
+        assert 'localId' in rows[0]
+        assert rows[0]['localId'] != ''
+        hdr = rows[0]['content'][0]
+        assert hdr['type'] == 'tableHeader'
+        assert 'localId' in hdr
+        assert hdr['localId'] != ''
+        hdr_text = hdr['content'][0]['content'][0]
+        assert hdr_text['marks'][0]['type'] == 'strong'
+        body_cell = rows[1]['content'][0]
+        assert body_cell['type'] == 'tableCell'
+        assert body_cell['localId'] != ''
+        assert 'colwidth' in body_cell['attrs']
+
+    def test_md_table_inline_flattened(self):
+        """Inline-flattened table (bug we hit) produces same ADF table."""
+        md = "| Header 1 | Header 2 | Header 3 | | --- | --- | --- | | a | b | c | | d | e | f |"
+        nodes = md_to_adf(md)
+        assert len(nodes) == 1
+        t = nodes[0]
+        assert t['type'] == 'table'
+        rows = t['content']
+        assert len(rows) == 3
+        assert rows[0]['content'][0]['type'] == 'tableHeader'
+        assert rows[1]['content'][0]['type'] == 'tableCell'
+
+    def test_md_table_inline_formatting(self):
+        """Cells with bold, italic, code, links produce correct inline marks."""
+        md = "| A | B | | --- | --- | | **bold** | *italic* | | `code` | [link](https://example.com) |"
+        nodes = md_to_adf(md)
+        t = nodes[0]
+        cells = t['content'][1]['content']
+        c0 = cells[0]['content'][0]['content'][0]
+        c1 = cells[1]['content'][0]['content'][0]
+        c2 = t['content'][2]['content'][0]['content'][0]['content'][0]
+        c3 = t['content'][2]['content'][1]['content'][0]['content'][0]
+        assert c0['marks'][0]['type'] == 'strong'
+        assert c1['marks'][0]['type'] == 'em'
+        assert c2['marks'][0]['type'] == 'code'
+        assert c3['marks'][0]['type'] == 'link'
+
+    def test_md_table_alignment_separator(self):
+        """Alignment markers in separator (:--, :-:, --:) are recognised and dropped."""
+        md = "\n".join([
+            "| L | C | R |",
+            "| :-- | :-: | --: |",
+            "| a | b | c |",
+        ])
+        nodes = md_to_adf(md)
+        t = nodes[0]
+        assert len(t['content']) == 2  # header + 1 data, separator dropped
+
+    def test_md_table_ragged_rows(self):
+        """Short rows pad with empty cells; long rows truncate."""
+        md = "\n".join([
+            "| A | B | C |",
+            "| --- | --- | --- |",
+            "| 1 | 2 |",       # short
+            "| 4 | 5 | 6 | 7 |",  # long
+        ])
+        nodes = md_to_adf(md)
+        t = nodes[0]
+        r1 = t['content'][1]['content']  # short row
+        r2 = t['content'][2]['content']  # long row
+        assert len(r1) == 3
+        assert len(r2) == 3
+
+    def test_md_table_in_mixed_document(self):
+        """Table sits between heading and bullet list, all separate nodes."""
+        md = "\n".join([
+            "## Before",
+            "",
+            "| A | B |",
+            "| --- | --- |",
+            "| 1 | 2 |",
+            "",
+            "- item one",
+            "- item two",
+        ])
+        nodes = md_to_adf(md)
+        types = [n['type'] for n in nodes]
+        assert types == ['heading', 'table', 'bulletList']
+
+    def test_md_table_localids_present(self):
+        """Every table/row/header/cell has a non-empty localId."""
+        md = "\n".join([
+            "| A | B |",
+            "| --- | --- |",
+            "| 1 | 2 |",
+        ])
+        nodes = md_to_adf(md)
+        t = nodes[0]
+        assert t['attrs']['localId'] != ''
+        for row in t['content']:
+            assert row['localId'] != ''
+            for cell in row['content']:
+                assert cell['localId'] != ''
+                assert 'colwidth' in cell['attrs']

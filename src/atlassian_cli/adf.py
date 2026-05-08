@@ -17,6 +17,7 @@ Provides:
 """
 
 import re
+import uuid
 
 from atlas_doc_parser.api import NodeDoc
 
@@ -297,22 +298,63 @@ def _to_list_item(item):
     return {'type': 'listItem', 'content': [para(str(item))]}
 
 
-def table(header_cells, rows):
-    """Create a table. header_cells/rows: lists of strings or inline-node lists."""
-    def cell(val, is_header=False):
-        ct = 'tableHeader' if is_header else 'tableCell'
-        if isinstance(val, str):
-            return {'type': ct, 'attrs': {}, 'content': [para(val)]}
-        if isinstance(val, list):
-            return {'type': ct, 'attrs': {}, 'content': [para(*val)]}
-        return {'type': ct, 'attrs': {}, 'content': [para(str(val))]}
+def table(header_cells, rows, *, colwidths=None, localid=None):
+    """Create a table. header_cells/rows: lists of strings or inline-node lists.
 
-    content = [{'type': 'tableRow', 'content': [cell(c, True) for c in header_cells]}]
-    for row in rows:
-        content.append({'type': 'tableRow', 'content': [cell(c) for c in row]})
+    Args:
+        header_cells: Column headings (strings or inline-node lists).
+        rows: Body rows, each a list of cell values.
+        colwidths: Optional list of column widths (int/float). If omitted,
+                   divides 900 equally.
+        localid: Optional table-level UUID. If omitted, generated.
+    """
+    n_cols = len(header_cells)
+    if colwidths is None:
+        colwidths = [round(900.0 / n_cols, 1)] * n_cols
+
+    def _uuid():
+        return str(uuid.uuid4())
+
+    def cell(val, col_idx, is_header=False, row_localid=None):
+        ct = 'tableHeader' if is_header else 'tableCell'
+        colwidth = colwidths[col_idx] if col_idx < len(colwidths) else colwidths[-1]
+        attrs = {'colspan': 1, 'colwidth': colwidth, 'rowspan': 1}
+        if isinstance(val, str):
+            content_nodes = [para(val)]
+        elif isinstance(val, list):
+            content_nodes = [para(*val)]
+        else:
+            content_nodes = [para(str(val))]
+        node = {
+            'type': ct,
+            'attrs': attrs,
+            'content': content_nodes,
+            'localId': _uuid(),
+        }
+        return node
+
+    tbl_localid = localid or _uuid()
+
+    content = [
+        {
+            'type': 'tableRow',
+            'content': [cell(c, ci, is_header=True) for ci, c in enumerate(header_cells)],
+            'localId': _uuid(),
+        }
+    ]
+    for ri, row in enumerate(rows):
+        row_localid = _uuid()
+        cells = []
+        for ci, c in enumerate(row):
+            cells.append(cell(c, ci, is_header=False))
+        content.append({
+            'type': 'tableRow',
+            'content': cells,
+            'localId': row_localid,
+        })
     return {
         'type': 'table',
-        'attrs': {'isNumberColumnEnabled': False, 'layout': 'default', 'localId': ''},
+        'attrs': {'isNumberColumnEnabled': False, 'layout': 'default', 'localId': tbl_localid},
         'content': content,
     }
 
@@ -342,8 +384,8 @@ def md_to_adf(markdown):
     """Convert a markdown string to a list of ADF nodes.
 
     Supports: headings, paragraphs, bullet/ordered lists, bold, italic,
-    bold+italic, inline code, links, horizontal rules, code blocks, blockquotes.
-    Tables should use the table() builder instead.
+    bold+italic, inline code, links, horizontal rules, code blocks, blockquotes,
+    tables (newline-separated and inline-flattened forms).
     """
     lines = markdown.split('\n')
     nodes = []
@@ -414,15 +456,127 @@ def md_to_adf(markdown):
             ]})
             continue
 
+        # Table (newline-separated Form A)
+        if line.startswith('|'):
+            tbl_result = _try_parse_table(lines, i)
+            if tbl_result:
+                nodes.append(tbl_result[0])
+                i = tbl_result[1]
+                continue
+
         # Paragraph — consecutive non-blank, non-block lines
         para_lines = []
         while i < len(lines) and lines[i].strip() and not _is_block_start(lines[i]):
             para_lines.append(lines[i])
             i += 1
         if para_lines:
-            nodes.append({'type': 'paragraph', 'content': _parse_inline(' '.join(para_lines))})
+            joined = ' '.join(para_lines)
+            # Table (inline-flattened Form B) — detect inside paragraph
+            if _looks_like_inline_table(joined):
+                tbl_node = _parse_inline_table(joined)
+                if tbl_node:
+                    nodes.append(tbl_node)
+                    continue
+            nodes.append({'type': 'paragraph', 'content': _parse_inline(joined)})
 
     return nodes
+
+
+_SEP_RE = re.compile(r'^:?-+:?$')
+
+
+def _is_separator_row(cell_texts):
+    """Return True if every non-empty cell matches the separator pattern."""
+    return all(_SEP_RE.match(c.strip()) for c in cell_texts if c.strip())
+
+
+def _split_row(line):
+    """Split a ``|...|...|`` markdown table row into cell strings."""
+    parts = line.strip().split('|')
+    # first and last are empty (leading/trailing pipe)
+    if parts and parts[0] == '':
+        parts = parts[1:]
+    if parts and parts[-1] == '':
+        parts = parts[:-1]
+    return [p.strip() for p in parts]
+
+
+def _looks_like_inline_table(text_str):
+    """Check if a single-line paragraph looks like a flattened markdown table."""
+    # Must contain a separator pattern: |---| somewhere
+    if not re.search(r'\|\s*:?-{3,}:?\s*\|', text_str):
+        return False
+    # Must have at least 2 pipes (3 cells minimum after split)
+    return text_str.count('|') >= 4
+
+
+def _parse_inline_table(text_str):
+    """Parse an inline-flattened markdown table into an ADF table node.
+
+    Row boundaries are ``|`` followed by whitespace then ``|`` (closing pipe
+    of one row immediately followed by opening pipe of the next).
+    """
+    raw_rows = re.split(r'\|\s+(?=\|)', text_str)
+    return _build_table_from_rows(raw_rows)
+
+
+def _try_parse_table(lines, start):
+    """Try to parse a newline-separated markdown table starting at *start*.
+
+    Returns ``(table_node, new_index)`` or ``None`` if not a valid table.
+    """
+    i = start
+    raw_rows = []
+    while i < len(lines) and lines[i].strip().startswith('|'):
+        raw_rows.append(lines[i].strip())
+        i += 1
+
+    if len(raw_rows) < 2:
+        return None
+    # The second row must be a separator
+    cells = _split_row(raw_rows[1])
+    if not _is_separator_row(cells):
+        return None
+
+    return _build_table_from_rows(raw_rows), i
+
+
+def _build_table_from_rows(raw_rows):
+    """Build an ADF table node from a list of ``|...|`` row strings.
+
+    First row = header, second row = separator (dropped), remainder = body.
+    """
+    if len(raw_rows) < 2:
+        return None
+
+    header_cells = _split_row(raw_rows[0])
+    n_cols = len(header_cells)
+
+    body_cells = []
+    for ri in range(2, len(raw_rows)):
+        row = _split_row(raw_rows[ri])
+        if not any(r.strip() for r in row):
+            continue
+        if len(row) < n_cols:
+            row.extend([''] * (n_cols - len(row)))
+        elif len(row) > n_cols:
+            row = row[:n_cols]
+        body_cells.append(row)
+
+    # Parse inline content for header cells, add strong mark
+    parsed_header = []
+    for h in header_cells:
+        inlines = _parse_inline(h)
+        for node in inlines:
+            if node.get('type') == 'text':
+                node.setdefault('marks', []).insert(0, {'type': 'strong'})
+        parsed_header.append(inlines)
+
+    parsed_body = []
+    for row in body_cells:
+        parsed_body.append([_parse_inline(c) for c in row])
+
+    return table(parsed_header, parsed_body)
 
 
 def _is_block_start(line):
