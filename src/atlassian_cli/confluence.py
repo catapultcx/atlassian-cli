@@ -251,15 +251,29 @@ def _ver_ts(page):
     return v.get('createdAt', '') if isinstance(v, dict) else ''
 
 
-def save_page(page_data, space_key, pages_dir):
+def save_page(page_data, space_key, pages_dir, *, output_format='adf'):
+    """Save a fetched page to ``pages_dir/<SPACE>/``.
+
+    output_format:
+      - 'adf' (default): write <id>.json containing the ADF body.
+      - 'md':            write <id>.md containing the markdown rendering.
+    The <id>.meta.json sidecar is always written.
+    """
     page_id = page_data['id']
     space_dir = os.path.join(pages_dir, space_key)
     os.makedirs(space_dir, exist_ok=True)
 
     body = page_data.get('body', {}).get('atlas_doc_format', {}).get('value', {})
-    adf_path = os.path.join(space_dir, f'{page_id}.json')
-    with open(adf_path, 'w') as f:
-        json.dump(body, f, indent=2)
+
+    if output_format == 'md':
+        from atlassian_cli.adf import adf_to_markdown
+        body_path = os.path.join(space_dir, f'{page_id}.md')
+        with open(body_path, 'w') as f:
+            f.write(adf_to_markdown(body))
+    else:
+        body_path = os.path.join(space_dir, f'{page_id}.json')
+        with open(body_path, 'w') as f:
+            json.dump(body, f, indent=2)
 
     meta = {
         'id': page_id,
@@ -274,7 +288,7 @@ def save_page(page_data, space_key, pages_dir):
     with open(meta_path, 'w') as f:
         json.dump(meta, f, indent=2)
 
-    return adf_path, meta_path
+    return body_path, meta_path
 
 
 def _find_page_file(page_id, pages_dir, suffix):
@@ -312,8 +326,9 @@ def cmd_get(args):
     page = get_page(session, base, args.page_id)
     space = get_space(session, base, space_id=page['spaceId'])
     space_key = space.get('key', str(page['spaceId']))
-    adf_path, _ = save_page(page, space_key, args.dir)
-    emit('OK', f'{page["title"]} (v{_ver(page)}) -> {adf_path}')
+    output_format = 'md' if getattr(args, 'md', False) else 'adf'
+    body_path, _ = save_page(page, space_key, args.dir, output_format=output_format)
+    emit('OK', f'{page["title"]} (v{_ver(page)}) -> {body_path}')
 
 
 def cmd_create(args):
@@ -709,12 +724,14 @@ def cmd_sync(args):
 
     to_fetch = []
     skipped = 0
+    body_suffix = '.md' if getattr(args, 'md', False) else '.json'
     for page in pages:
         page_id = page['id']
         remote_ver = _ver(page)
         if not args.force:
             meta = load_meta(page_id, args.dir)
-            if meta and meta.get('version', 0) >= remote_ver:
+            body_file = os.path.join(args.dir, space_key, f'{page_id}{body_suffix}')
+            if meta and meta.get('version', 0) >= remote_ver and os.path.isfile(body_file):
                 skipped += 1
                 continue
         to_fetch.append(page)
@@ -729,13 +746,14 @@ def cmd_sync(args):
     print(f'Fetching {len(to_fetch)} pages ({args.workers} workers)…', file=sys.stderr)
 
     errors = 0
+    output_format = 'md' if getattr(args, 'md', False) else 'adf'
 
     def fetch_one(page):
         nonlocal errors
         page_id = page['id']
         try:
             full_page = get_page(session, base, page_id)
-            save_page(full_page, space_key, args.dir)
+            save_page(full_page, space_key, args.dir, output_format=output_format)
             return f'GET {page_id} {full_page.get("title", "")} (v{_ver(full_page)})'
         except Exception as e:
             errors += 1
@@ -747,6 +765,57 @@ def cmd_sync(args):
             print(future.result())
 
     emit('DONE', f'{space_key}: {len(to_fetch)} fetched, {skipped} skipped, {errors} errors')
+
+
+def cmd_cql(args):
+    """Run a CQL query against the Confluence Search API.
+
+    Output modes:
+      - default: plain-text table (id [space] title)
+      - global --json: JSON array of {id, title, space, url, excerpt}
+      - --md: markdown bullet list with deep links
+    """
+    session, base = setup()
+    query = args.query
+    if args.space:
+        query = f'space = "{args.space}" AND ({query})'
+    data = api_get(session, base, f'{V1}/search', cql=query, limit=args.limit)
+    raw = data.get('results', [])
+
+    results = []
+    for r in raw:
+        content = r.get('content') or {}
+        space_key = ''
+        if isinstance(content.get('space'), dict):
+            space_key = content['space'].get('key', '')
+        results.append({
+            'id': content.get('id', ''),
+            'title': r.get('title') or content.get('title', ''),
+            'space': space_key,
+            'url': r.get('url', ''),
+            'excerpt': r.get('excerpt', ''),
+        })
+
+    if getattr(args, 'md', False):
+        if not results:
+            print('No results.', file=sys.stderr)
+        else:
+            for r in results:
+                title = r['title'] or '(untitled)'
+                space = r['space'] or '?'
+                page_id = r['id']
+                print(f'- [{title}]({r["url"]}) — {space} ({page_id})')
+        return
+
+    if is_json_mode():
+        print(json.dumps(results, indent=2))
+        return
+
+    if not results:
+        print('No results.', file=sys.stderr)
+        return
+    for r in results:
+        print(f'{r["id"]} [{r["space"] or "?"}] {r["title"]}')
 
 
 def cmd_search(args):
@@ -1297,6 +1366,7 @@ def main():
     p = sub.add_parser('get', help='Download a page (ADF + metadata)')
     p.add_argument('page_id', help='Confluence page ID')
     p.add_argument('--dir', default='pages', help='Output directory (default: pages)')
+    p.add_argument('--md', action='store_true', help='Save as markdown (<id>.md) instead of ADF JSON')
     p.set_defaults(func=cmd_get)
 
     p = sub.add_parser('create', help='Create a new page')
@@ -1389,7 +1459,15 @@ def main():
     p.add_argument('--dir', default='pages', help='Output directory (default: pages)')
     p.add_argument('--workers', type=int, default=10, help='Parallel workers (default: 10)')
     p.add_argument('--force', action='store_true', help='Re-download all, ignore cache')
+    p.add_argument('--md', action='store_true', help='Render each page as markdown (<id>.md) instead of ADF JSON')
     p.set_defaults(func=cmd_sync)
+
+    p = sub.add_parser('cql', help='Content-level search using CQL (Confluence Query Language)')
+    p.add_argument('query', help='CQL query string, e.g. \'text ~ "risk register"\'')
+    p.add_argument('--space', help='Restrict to a space (prepends space = "<KEY>" AND ... to the query)')
+    p.add_argument('--limit', type=int, default=25, help='Max results (default: 25)')
+    p.add_argument('--md', action='store_true', help='Markdown bullet-list output instead of plain text')
+    p.set_defaults(func=cmd_cql)
 
     p = sub.add_parser('search', help='Search local page index')
     p.add_argument('query', help='Search term (title or ID)')

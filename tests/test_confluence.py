@@ -17,10 +17,12 @@ from atlassian_cli.confluence import (
     cmd_blog_get,
     cmd_blog_list,
     cmd_blog_update,
+    cmd_cql,
     cmd_diff,
     cmd_get,
     cmd_index,
     cmd_search,
+    cmd_sync,
     create_blogpost,
     get_blogpost,
     get_page,
@@ -39,6 +41,7 @@ from atlassian_cli.confluence import (
 from atlassian_cli.output import set_json_mode
 
 BASE = "https://test.atlassian.net"
+V1 = "/wiki/rest/api"
 V2 = "/wiki/api/v2"
 
 SAMPLE_PAGE = {
@@ -165,6 +168,19 @@ class TestSavePage:
         assert meta["title"] == "Test Page"
         assert meta["version"] == 3
 
+    def test_md_format_writes_md_only(self, tmp_path):
+        body_path, meta_path = save_page(SAMPLE_PAGE, "TEST", str(tmp_path), output_format="md")
+        assert body_path.endswith(".md")
+        assert os.path.isfile(body_path)
+        assert os.path.isfile(meta_path)
+
+        with open(body_path) as f:
+            md = f.read()
+        assert "Hello" in md
+
+        # No ADF JSON file when --md
+        assert not os.path.isfile(os.path.join(str(tmp_path), "TEST", "12345.json"))
+
 
 class TestLoadMeta:
     def test_loads_existing(self, tmp_path):
@@ -194,10 +210,21 @@ class TestCmdGet:
             responses.GET, f"{BASE}{V2}/spaces/100",
             json=SAMPLE_SPACE,
         )
-        cmd_get(Namespace(page_id="12345", dir=str(tmp_path)))
+        cmd_get(Namespace(page_id="12345", dir=str(tmp_path), md=False))
         out = capsys.readouterr().out
         assert "Test Page" in out
         assert os.path.isfile(os.path.join(str(tmp_path), "TEST", "12345.json"))
+
+    @responses.activate
+    def test_downloads_page_as_md(self, capsys, tmp_path):
+        responses.add(responses.GET, f"{BASE}{V2}/pages/12345", json=SAMPLE_PAGE)
+        responses.add(
+            responses.GET, f"{BASE}{V2}/spaces/100",
+            json=SAMPLE_SPACE,
+        )
+        cmd_get(Namespace(page_id="12345", dir=str(tmp_path), md=True))
+        assert os.path.isfile(os.path.join(str(tmp_path), "TEST", "12345.md"))
+        assert not os.path.isfile(os.path.join(str(tmp_path), "TEST", "12345.json"))
 
 
 class TestCmdDiff:
@@ -589,3 +616,130 @@ class TestUpdateBlogpost:
                                      title="New Title", body="New body")
         assert title == "New Title"
         assert ver == 2
+
+
+class TestCmdSync:
+    @responses.activate
+    def test_renders_pages_as_md(self, capsys, tmp_path):
+        # Space lookup
+        responses.add(
+            responses.GET, f"{BASE}{V2}/spaces",
+            json={"results": [SAMPLE_SPACE]},
+        )
+        # Page list
+        responses.add(
+            responses.GET, f"{BASE}{V2}/spaces/100/pages",
+            json={"results": [{"id": "12345", "version": {"number": 3}}], "_links": {}},
+        )
+        # Page fetch
+        responses.add(responses.GET, f"{BASE}{V2}/pages/12345", json=SAMPLE_PAGE)
+
+        cmd_sync(Namespace(
+            space_key="TEST",
+            dir=str(tmp_path),
+            workers=1,
+            force=True,
+            md=True,
+        ))
+
+        assert os.path.isfile(os.path.join(str(tmp_path), "TEST", "12345.md"))
+        assert not os.path.isfile(os.path.join(str(tmp_path), "TEST", "12345.json"))
+
+
+SAMPLE_CQL_RESPONSE = {
+    "results": [
+        {
+            "content": {
+                "id": "12345",
+                "type": "page",
+                "title": "Risk Policy",
+                "space": {"key": "POL"},
+            },
+            "title": "Risk Policy",
+            "url": "/spaces/POL/pages/12345",
+            "excerpt": "Risks are managed via …",
+        },
+        {
+            "content": {
+                "id": "67890",
+                "type": "page",
+                "title": "Risk Register",
+                "space": {"key": "COMPLY"},
+            },
+            "title": "Risk Register",
+            "url": "/spaces/COMPLY/pages/67890",
+            "excerpt": "Open risks: …",
+        },
+    ],
+    "totalSize": 2,
+}
+
+
+class TestCmdCql:
+    @responses.activate
+    def test_text_output(self, capsys):
+        responses.add(
+            responses.GET, f"{BASE}{V1}/search",
+            json=SAMPLE_CQL_RESPONSE,
+        )
+        cmd_cql(Namespace(query='text ~ "risk"', space=None, limit=25, md=False))
+        out = capsys.readouterr().out
+        assert "Risk Policy" in out
+        assert "12345" in out
+        assert "POL" in out
+
+    @responses.activate
+    def test_json_output(self, capsys):
+        from atlassian_cli.output import set_json_mode
+        responses.add(
+            responses.GET, f"{BASE}{V1}/search",
+            json=SAMPLE_CQL_RESPONSE,
+        )
+        set_json_mode(True)
+        try:
+            cmd_cql(Namespace(query='text ~ "risk"', space=None, limit=25, md=False))
+        finally:
+            set_json_mode(False)
+        out = capsys.readouterr().out
+        parsed = json.loads(out)
+        assert isinstance(parsed, list)
+        assert parsed[0]["id"] == "12345"
+        assert parsed[0]["space"] == "POL"
+        assert parsed[0]["title"] == "Risk Policy"
+
+    @responses.activate
+    def test_md_output(self, capsys):
+        responses.add(
+            responses.GET, f"{BASE}{V1}/search",
+            json=SAMPLE_CQL_RESPONSE,
+        )
+        cmd_cql(Namespace(query='text ~ "risk"', space=None, limit=25, md=True))
+        out = capsys.readouterr().out
+        assert "Risk Policy" in out
+        assert "- " in out
+        assert "12345" in out
+
+    @responses.activate
+    def test_space_filter_prepends_clause(self):
+        captured = {}
+
+        def callback(request):
+            captured["url"] = request.url
+            return (200, {}, json.dumps(SAMPLE_CQL_RESPONSE))
+
+        responses.add_callback(
+            responses.GET, f"{BASE}{V1}/search", callback=callback,
+        )
+        cmd_cql(Namespace(query='text ~ "risk"', space="POL", limit=25, md=False))
+        # The space clause should be present in the URL-encoded CQL
+        assert 'space+%3D+%22POL%22' in captured["url"] or 'space%3D%22POL%22' in captured["url"]
+
+    @responses.activate
+    def test_no_results(self, capsys):
+        responses.add(
+            responses.GET, f"{BASE}{V1}/search",
+            json={"results": [], "totalSize": 0},
+        )
+        cmd_cql(Namespace(query='text ~ "nothing"', space=None, limit=25, md=False))
+        err = capsys.readouterr().err
+        assert "No results" in err
