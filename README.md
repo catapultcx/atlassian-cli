@@ -73,8 +73,18 @@ confluence diff 9268920323
 confluence sync POL
 confluence sync COMPLY --workers 20 --force
 
-# Search local page index (instant, no API call)
+# Bulk-render pages as markdown (instead of ADF JSON) — handy for AI ingestion
+confluence sync POL --md                   # writes pages/POL/<id>.md
+confluence get 9268920323 --md             # single page, as markdown
+
+# Search local page index by title (instant, no API call)
 confluence search "risk assessment"
+
+# Content-level search via Confluence's CQL (hits the live API)
+confluence cql 'text ~ "risk register"'
+confluence cql 'text ~ "risk"' --space POL --limit 10
+confluence cql 'text ~ "risk"' --md        # markdown bullet list with deep links
+confluence --json cql 'text ~ "risk"'      # JSON array
 
 # Rebuild the page index
 confluence index
