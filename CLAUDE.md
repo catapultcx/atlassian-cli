@@ -19,7 +19,7 @@ Two entry points: `confluence` and `jira`. All commands accept `--json` for mach
 ### Confluence
 
 ```bash
-confluence create <space> <title> [--body|--file] [--parent ID]  # create page
+confluence create <space> <title> [--body|--file] [--parent ID]  # create page (--body = markdown; --file = raw ADF)
 confluence get <page_id> [--md]             # download page (ADF JSON by default; --md = markdown)
 confluence put <page_id> [--force] [-m msg]  # upload local edits
 confluence delete <page_id>                 # delete a page
@@ -47,7 +47,7 @@ jira issue update <key> [--summary] [--description] [--labels] [--assignee] [--f
 jira issue delete <key>
 jira issue search <jql> [--max 50] [--all] [--dump FILE]
 jira issue transition <key> <status>
-jira issue comment <key> <body>
+jira issue comment <key> <body>                       # body and --description accept markdown (headings, lists, tables, code, links)
 jira issue comments <key>
 ```
 

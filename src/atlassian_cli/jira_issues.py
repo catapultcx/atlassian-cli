@@ -3,7 +3,7 @@
 import json
 import sys
 
-from atlassian_cli.adf import adf_to_markdown
+from atlassian_cli.adf import adf_to_markdown, md_to_adf
 from atlassian_cli.config import setup
 from atlassian_cli.http import api_delete, api_get, api_post, api_put
 from atlassian_cli.output import emit, emit_error, emit_json, is_json_mode
@@ -24,11 +24,18 @@ def _extract_text(adf_body):
 
 
 def _text_adf(text):
-    """Wrap plain text in minimal ADF document."""
-    return {
-        'type': 'doc', 'version': 1,
-        'content': [{'type': 'paragraph', 'content': [{'type': 'text', 'text': text}]}],
-    }
+    """Convert ``text`` (treated as markdown) to a full ADF document.
+
+    Plain strings round-trip unchanged (single paragraph). Markdown
+    constructs — headings, lists, tables, code blocks, links, emphasis —
+    are parsed into structured ADF nodes via ``md_to_adf``. If you need
+    to send raw ADF (e.g. for macros), use ``--file`` on commands that
+    support it instead of this code path.
+    """
+    content = md_to_adf(text) if text else []
+    if not content:
+        content = [{'type': 'paragraph', 'content': []}]
+    return {'type': 'doc', 'version': 1, 'content': content}
 
 
 def cmd_get(args):

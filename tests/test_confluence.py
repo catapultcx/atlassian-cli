@@ -297,6 +297,20 @@ class TestMakeAdfBody:
         assert result["type"] == "doc"
         assert result["content"][0]["content"][0]["text"] == "Hello"
 
+    def test_markdown_heading_and_list(self):
+        md = "# Title\n\n- item one\n- item two"
+        result = _make_adf_body(md)
+        types = [n["type"] for n in result["content"]]
+        assert types == ["heading", "bulletList"]
+        assert result["content"][0]["attrs"]["level"] == 1
+        items = result["content"][1]["content"]
+        assert len(items) == 2
+
+    def test_empty_text(self):
+        result = _make_adf_body("")
+        assert result["type"] == "doc"
+        assert len(result["content"]) >= 1
+
 
 class TestListComments:
     @responses.activate

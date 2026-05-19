@@ -39,6 +39,22 @@ class TestTextAdf:
         assert result["type"] == "doc"
         assert result["content"][0]["content"][0]["text"] == "Hello world"
 
+    def test_markdown_heading_and_list(self):
+        md = "# Title\n\n- item one\n- item two"
+        result = _text_adf(md)
+        types = [n["type"] for n in result["content"]]
+        assert types == ["heading", "bulletList"]
+        assert result["content"][0]["attrs"]["level"] == 1
+        assert result["content"][0]["content"][0]["text"] == "Title"
+        items = result["content"][1]["content"]
+        assert len(items) == 2
+
+    def test_empty_text(self):
+        result = _text_adf("")
+        assert result["type"] == "doc"
+        # Empty input still yields a valid doc the API will accept
+        assert len(result["content"]) >= 1
+
     def test_extracts_text(self):
         adf = _text_adf("Hello world")
         assert _extract_text(adf) == "Hello world"

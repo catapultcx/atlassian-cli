@@ -131,11 +131,7 @@ def create_blogpost(session, base, space_id, title, *, body=None, file=None,
     elif body:
         body_payload = {
             'representation': 'atlas_doc_format',
-            'value': json.dumps({
-                'type': 'doc', 'version': 1,
-                'content': [{'type': 'paragraph',
-                             'content': [{'type': 'text', 'text': body}]}],
-            }),
+            'value': json.dumps(_make_adf_body(body)),
         }
 
     payload = {
@@ -184,11 +180,7 @@ def update_blogpost(session, base, blogpost_id, *,
     elif body is not None:
         body_payload = {
             'representation': 'atlas_doc_format',
-            'value': json.dumps({
-                'type': 'doc', 'version': 1,
-                'content': [{'type': 'paragraph',
-                             'content': [{'type': 'text', 'text': body}]}],
-            }),
+            'value': json.dumps(_make_adf_body(body)),
         }
     else:
         body_value = remote.get('body', {}).get('atlas_doc_format', {}).get('value')
@@ -347,11 +339,7 @@ def cmd_create(args):
     elif args.body:
         body_payload = {
             'representation': 'atlas_doc_format',
-            'value': json.dumps({
-                'type': 'doc', 'version': 1,
-                'content': [{'type': 'paragraph',
-                             'content': [{'type': 'text', 'text': args.body}]}],
-            }),
+            'value': json.dumps(_make_adf_body(args.body)),
         }
 
     payload = {
@@ -906,14 +894,19 @@ def _adf_to_text(node):
 
 
 def _make_adf_body(text):
-    """Create a simple ADF document from plain text."""
-    return {
-        'type': 'doc',
-        'version': 1,
-        'content': [
-            {'type': 'paragraph', 'content': [{'type': 'text', 'text': text}]}
-        ],
-    }
+    """Convert ``text`` (treated as markdown) to a full ADF document.
+
+    Plain strings round-trip unchanged (single paragraph). Markdown
+    constructs — headings, lists, tables, code blocks, links, emphasis —
+    are parsed into structured ADF nodes via ``md_to_adf``. If you need
+    raw ADF (e.g. for Confluence macros / panel boxes), use ``--file``
+    on commands that support it instead of this code path.
+    """
+    from atlassian_cli.adf import md_to_adf
+    content = md_to_adf(text) if text else []
+    if not content:
+        content = [{'type': 'paragraph', 'content': []}]
+    return {'type': 'doc', 'version': 1, 'content': content}
 
 
 def list_comments(session, base, page_id, comment_type='inline'):

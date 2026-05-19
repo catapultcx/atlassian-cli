@@ -77,6 +77,13 @@ confluence sync COMPLY --workers 20 --force
 confluence sync POL --md                   # writes pages/POL/<id>.md
 confluence get 9268920323 --md             # single page, as markdown
 
+# `--body` accepts markdown — headings, lists, tables, code blocks, links,
+# emphasis. Use `--file` for raw ADF when you need macros / panel boxes.
+confluence create POL "Quarterly update" --body "# Q2 Highlights
+
+- Shipped X
+- Improved Y"
+
 # Search local page index by title (instant, no API call)
 confluence search "risk assessment"
 
